@@ -120,6 +120,15 @@ CREATE TABLE IF NOT EXISTS visits(          -- каждый /start с метко
 );
 CREATE INDEX IF NOT EXISTS ix_visits ON visits(slug, at);
 
+CREATE TABLE IF NOT EXISTS pending(         -- ночные находки: утром одним сообщением
+  chat_id  INTEGER,
+  key      TEXT,      -- откуда-куда: одно направление — одна строка, свежая
+  discount INTEGER,
+  payload  TEXT,
+  at       TEXT,
+  PRIMARY KEY(chat_id, key)
+);
+
 CREATE TABLE IF NOT EXISTS meta(k TEXT PRIMARY KEY, v TEXT);
 """
 
@@ -688,10 +697,11 @@ def active_posts(days):
         (_ago(days=days),)).fetchall()
 
 
-def next_queued():
+def next_queued(min_pct=None):
     """Следующий в очередь на публикацию: самая большая скидка, потом старший."""
     return connect().execute(
-        "SELECT * FROM posts WHERE status='queued' ORDER BY pct DESC, id LIMIT 1").fetchone()
+        "SELECT * FROM posts WHERE status='queued' AND pct>=? ORDER BY pct DESC, id LIMIT 1",
+        (min_pct or 0,)).fetchone()
 
 
 def expire_queue(hours):
@@ -702,6 +712,50 @@ def expire_queue(hours):
                        (_ago(hours=hours),)).rowcount
         db.commit()
     return n
+
+
+def cheapest_on(origin, departs, since, limit=12):
+    """Самый дешёвый билет в одну сторону на каждое направление в эти даты вылета."""
+    if not departs:
+        return []
+    marks = ",".join("?" * len(departs))
+    return connect().execute(
+        f"SELECT dest, depart, MIN(price) AS price FROM prices WHERE origin=? "
+        f"AND depart IN ({marks}) AND ret IS NULL AND found_at>=? "
+        f"AND length(dest)=3 AND dest!=origin GROUP BY dest ORDER BY price LIMIT ?",
+        (origin, *departs, since, limit)).fetchall()
+
+
+def add_pending(chat_id, key, d):
+    import json
+    db = connect()
+    with _lock:
+        db.execute("INSERT OR REPLACE INTO pending(chat_id,key,discount,payload,at) "
+                   "VALUES(?,?,?,?,?)", (chat_id, key, d.get("discount") or 0,
+                                         json.dumps(d, ensure_ascii=False), now()))
+        db.commit()
+
+
+def pending_chats():
+    return [r[0] for r in connect().execute("SELECT DISTINCT chat_id FROM pending")]
+
+
+def take_pending(chat_id, limit):
+    """Забрать ночные находки человека: лучшие limit, остальное выбросить."""
+    import json
+    db = connect()
+    rows = db.execute("SELECT payload FROM pending WHERE chat_id=? "
+                      "ORDER BY discount DESC, at DESC LIMIT ?", (chat_id, limit)).fetchall()
+    with _lock:
+        db.execute("DELETE FROM pending WHERE chat_id=?", (chat_id,))
+        db.commit()
+    return [json.loads(r[0]) for r in rows]
+
+
+def published_since(since):
+    """Сколько постов вышло в канал с момента since — включая снятые потом."""
+    return connect().execute("SELECT COUNT(*) FROM posts WHERE published_at>=?",
+                             (since,)).fetchone()[0]
 
 
 def last_published_at():

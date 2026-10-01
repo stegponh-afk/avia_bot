@@ -77,6 +77,9 @@ FLASH_PCT = _i("AVIA_FLASH_PCT", 80)     # от стольких % — пред�
 MODE = _s("AVIA_MODE", "deals")
 NO_LIMIT = 1000000                       # «бюджет без ограничения»
 USER_ALERTS_PER_RUN = _i("AVIA_USER_ALERTS", 3)   # не больше сообщений человеку за проход
+# Ночью бот не пишет: находки копятся и утром уходят одним сообщением
+BOT_QUIET = tuple(int(x) for x in _s("AVIA_BOT_QUIET", "23-8").split("-"))
+NIGHT_KEEP = _i("AVIA_NIGHT_KEEP", 5)              # сколько находок за ночь показать утром
 
 ORIGIN       = _s("AVIA_ORIGIN", "KZN")      # откуда. KZN = Казань
 ONE_WAY      = _b("AVIA_ONE_WAY", True)      # False = цены туда-обратно
@@ -289,7 +292,10 @@ CHANNEL_AUTO = _b("AVIA_CHANNEL_AUTO", True)            # False = чернови
 # Новый вид постов (rich): картинка, заголовок и кнопки внутри поста. Хэштеги
 # в нём не нажимаются — только долгим нажатием. False = картинка с подписью.
 CHANNEL_RICH = _b("AVIA_CHANNEL_RICH", True)
-CHANNEL_GAP_MIN = _i("AVIA_CHANNEL_GAP", 10)            # минут между постами
+CHANNEL_GAP_MIN = _i("AVIA_CHANNEL_GAP", 10)            # минут между постами, не чаще
+CHANNEL_GAP_MAX = _i("AVIA_CHANNEL_GAP_MAX", 60)        # и не реже, если есть что публиковать
+CHANNEL_DAY_MAX = _i("AVIA_CHANNEL_DAY_MAX", 20)        # постов за сутки, не больше
+CHANNEL_NIGHT_PCT = _i("AVIA_CHANNEL_NIGHT_PCT", 50)    # ночью — только скидки от стольких %
 CHANNEL_QUEUE_HOURS = _i("AVIA_CHANNEL_QUEUE_HOURS", 6) # дольше в очереди — устарело
 CHANNEL_QUIET = tuple(int(x) for x in _s("AVIA_CHANNEL_QUIET", "23-8").split("-"))  # без звука
 # Обратный билет в посте: самый дешёвый через столько-то дней после вылета.
@@ -299,6 +305,10 @@ CHANNEL_CHEAP_TAG = _i("AVIA_CHANNEL_CHEAP_TAG", 5000)   # тег #до5000
 # Дайджест «лучшее за неделю»: день недели (0 = пн, 6 = вс) и час.
 CHANNEL_DIGEST_DAY  = _i("AVIA_CHANNEL_DIGEST_DAY", 6)
 CHANNEL_DIGEST_HOUR = _i("AVIA_CHANNEL_DIGEST_HOUR", 12)
+# «Куда на выходные»: в четверг вечером — поездки на ближайшие пт–вс/пн
+CHANNEL_WEEKEND_DAY   = _i("AVIA_CHANNEL_WEEKEND_DAY", 3)     # 0 = пн … 3 = чт
+CHANNEL_WEEKEND_HOUR  = _i("AVIA_CHANNEL_WEEKEND_HOUR", 18)
+CHANNEL_WEEKEND_CHECK = _i("AVIA_CHANNEL_WEEKEND_CHECK", 12)  # направлений проверить обратно, на город
 # Маркировка рекламы в конце каждого поста — текст из кабинета Travelpayouts
 # («Отказ от ответственности в рекламе»). Пусто = без пометки.
 AD_LABEL = _s("AVIA_AD_LABEL", "")

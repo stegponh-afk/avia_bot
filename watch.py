@@ -119,7 +119,9 @@ async def check():
     import notify
     import post
     watches = db.all_watches()
-    if not watches:
+    if not watches or notify.quiet_now():
+        # ночью не проверяем: утром первая проверка возьмёт свежие цены
+        # и напишет, если есть что, — уже не разбудив
         return 0
     rows = {}
     async with aiohttp.ClientSession() as s:

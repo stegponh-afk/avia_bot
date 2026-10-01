@@ -302,6 +302,7 @@ async def loop(on_alerts, on_found=None):
             if alerts:
                 await on_alerts(alerts)
             await watch_due()
+            await notify.morning()
             db.prune()
             if fails >= 2:
                 await notify.resolved("poll", "Сборщик цен снова работает.")

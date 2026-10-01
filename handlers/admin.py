@@ -55,7 +55,8 @@ def text(chat_id):
         ui.rows_block([
             f"📣 Канал: {', '.join(C.CHANNEL_ORIGINS)}, скидка от {C.CHANNEL_DEAL_PCT}%, "
             f"падение от {C.CHANNEL_DROP_PCT}%",
-            (f"Автопубликация: раз в {C.CHANNEL_GAP_MIN} мин, ночью без звука"
+            (f"Автопубликация: до {C.CHANNEL_DAY_MAX} в день, сегодня вышло "
+             f"{channel.published_today()}; ночью только от {C.CHANNEL_NIGHT_PCT}%, без звука"
              if C.CHANNEL_AUTO else "Публикация по кнопке в черновике"),
             f"За сутки: в очереди {db.count_posts('queued')}, "
             f"опубликовано {db.count_posts('published')}, "
@@ -130,6 +131,17 @@ async def cb_digest(q: CallbackQuery):
     ok = await channel.digest_due(force=True)
     await q.message.answer("🏆 Дайджест опубликован." if ok else
                            "За неделю меньше трёх постов — дайджест не из чего собрать.")
+
+
+@router.callback_query(F.data == "admin:weekend")
+async def cb_weekend(q: CallbackQuery):
+    if not is_owner(q.from_user.id):
+        return
+    await q.answer("Собираю, это до минуты")
+    ok = await channel.weekend_due(force=True)
+    await q.message.answer("🏖 Подборка на выходные опубликована." if ok else
+                           "На ближайшие выходные меньше трёх вариантов туда-обратно — "
+                           "подборку не из чего собрать.")
 
 
 @router.callback_query(F.data == "admin:style")

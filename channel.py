@@ -367,9 +367,33 @@ def quiet_now():
     return h >= start or h < end if start > end else start <= h < end
 
 
+def published_today():
+    midnight = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+    return db.published_since(midnight.isoformat(timespec="seconds"))
+
+
+def gap_now(done):
+    """
+    Минут до следующего поста: остаток дневного лимита размазываем до
+    начала ночи, чтобы вечером было что читать, а не всё ушло к обеду.
+    Не реже раза в CHANNEL_GAP_MAX минут — хорошая скидка долго не ждёт.
+    """
+    if quiet_now():
+        return C.CHANNEL_GAP_MIN
+    now = datetime.now()
+    night = now.replace(hour=C.CHANNEL_QUIET[0], minute=0, second=0, microsecond=0)
+    left = max(1, C.CHANNEL_DAY_MAX - done)
+    spread = (night - now).total_seconds() / 60 / left
+    return max(C.CHANNEL_GAP_MIN, min(spread, C.CHANNEL_GAP_MAX))
+
+
 async def publish_next():
     """
-    Опубликовать лучший пост из очереди, если с прошлого прошло CHANNEL_GAP_MIN.
+    Опубликовать лучший пост из очереди, если подошло время (gap_now).
+
+    Не больше CHANNEL_DAY_MAX постов за сутки: сорок постов в день — это
+    уведомление каждые двадцать минут, от такого отписываются. Ночью —
+    только суперскидки, остальное ждёт утра в очереди или устаревает.
 
     Не вышло (цена ушла, билет пропал) — пост снимается, следующий пробуем
     на следующем тике. Источник не ответил — пост остаётся в очереди.
@@ -377,11 +401,14 @@ async def publish_next():
     if not C.CHANNEL_AUTO or not db.channel_id():
         return False
     db.expire_queue(C.CHANNEL_QUEUE_HOURS)
+    done = published_today()
+    if done >= C.CHANNEL_DAY_MAX:
+        return False
     last = db.last_published_at()
     if last and (datetime.now() - datetime.fromisoformat(last)).total_seconds() \
-            < C.CHANNEL_GAP_MIN * 60:
+            < gap_now(done) * 60:
         return False
-    p = db.next_queued()
+    p = db.next_queued(min_pct=C.CHANNEL_NIGHT_PCT if quiet_now() else None)
     if not p:
         return False
     from notify import make_bot
@@ -412,10 +439,11 @@ async def publisher():
     import traceback
     import notify
     while True:
-        try:
-            await digest_due()
-        except Exception:
-            traceback.print_exc()
+        for rubric in (digest_due, weekend_due):
+            try:
+                await rubric()
+            except Exception:
+                traceback.print_exc()
         try:
             if await publish_next():
                 await notify.resolved("publish", "Публикация в канал снова работает.")
@@ -427,6 +455,93 @@ async def publisher():
 
 
 # ---------- рубрики ----------
+
+def weekend_dates():
+    """Ближайшие выходные: туда в пт или сб, обратно в вс или пн."""
+    today = date.today()
+    fri = today + timedelta(days=(4 - today.weekday()) % 7)
+    return fri, fri + timedelta(days=1)
+
+
+async def weekend_picks(origin, n=5):
+    """
+    Самые дешёвые поездки на ближайшие выходные из города: туда по свежим
+    ценам обхода, обратно — запросом на направление (enrich). Сумма двух
+    билетов, по возрастанию. Обратного на вс/пн нет — направление не берём.
+    """
+    tomorrow = (date.today() + timedelta(days=1)).isoformat()
+    outs = [d.isoformat() for d in weekend_dates() if d.isoformat() >= tomorrow]
+    rows = db.cheapest_on(origin, outs, since=(datetime.now() - timedelta(hours=24))
+                          .isoformat(timespec="seconds"), limit=C.CHANNEL_WEEKEND_CHECK)
+    out = []
+    for r in rows:
+        d = {"origin": origin, "dest": r["dest"], "depart": r["depart"], "price": r["price"]}
+        try:
+            await enrich(d)
+        except Exception as e:
+            print(f"  выходные {origin}-{r['dest']}: {e}")
+            continue
+        if d.get("weekend"):
+            d["total"] = d["price"] + d["weekend"]["price"]
+            out.append(d)
+    out.sort(key=lambda d: d["total"])
+    return out[:n]
+
+
+async def weekend_due(force=False):
+    """
+    «Куда на выходные» — раз в неделю, в CHANNEL_WEEKEND_DAY после
+    CHANNEL_WEEKEND_HOUR: самые дешёвые поездки туда-обратно на ближайшие
+    выходные из Москвы и Питера. Меньше трёх вариантов — не публикуем.
+    """
+    cid = db.channel_id()
+    if not cid:
+        return False
+    now = datetime.now()
+    week = now.strftime("%G-%V")
+    if not force:
+        if now.weekday() != C.CHANNEL_WEEKEND_DAY or now.hour < C.CHANNEL_WEEKEND_HOUR:
+            return False
+        if db.meta_get("weekend_week") == week:
+            return False
+    db.meta_set("weekend_week", week)
+    picks = {o: await weekend_picks(o) for o in C.CHANNEL_ORIGINS}
+    if sum(len(v) for v in picks.values()) < 3:
+        print("  выходные: вариантов меньше трёх, подборку пропускаю")
+        return False
+
+    # даты в заголовке — от самого раннего вылета до самого позднего возвращения
+    every = [d for v in picks.values() for d in v]
+    a = date.fromisoformat(min(d["depart"] for d in every))
+    b = date.fromisoformat(max(d["weekend"]["depart"] for d in every))
+    span = f"{a.day}–{b.day} {render.MONTHS[b.month - 1]}" if a.month == b.month \
+        else f"{a.day} {render.MONTHS[a.month - 1]} – {b.day} {render.MONTHS[b.month - 1]}"
+    names = {"MOW": "Из Москвы", "LED": "Из Питера"}
+    short = {4: "пт", 5: "сб", 6: "вс", 0: "пн"}
+
+    def days(d):
+        a, b = date.fromisoformat(d["depart"]), date.fromisoformat(d["weekend"]["depart"])
+        return f"{short[a.weekday()]}–{short[b.weekday()]}"
+
+    rows, parts = [], [f"🏖 <b>Куда на выходные</b>\n{span} · туда и обратно"]
+    for origin, items in picks.items():
+        if not items:
+            continue
+        rows += [(days(d), route(d), render.money(d["total"])) for d in items[:3]]
+        lines = [f"<b>{names.get(origin, 'Из ' + places.name(origin))}</b>"]
+        for i, d in enumerate(items, 1):
+            url = tp.buy_link(dict(d, ret=d["weekend"]["depart"]), "ch_weekend")
+            lines.append(f'{i}. <a href="{url}">{places.name(d["dest"])}</a> — '
+                         f'{render.money(d["total"])} · {days(d)}, '
+                         f'{render.when(d["depart"])} → {render.when(d["weekend"]["depart"])}')
+        parts.append("\n".join(lines))
+    parts.append("<i>Цена — за оба билета на момент публикации. "
+                 "Нажми город — откроется поиск туда-обратно на эти даты.</i>")
+    parts.append("#наВыходные #подборка")
+    png = card.digest("Куда на выходные", f"{span} · туда и обратно, за два билета", rows[:6])
+    from notify import make_bot
+    await send_post(make_bot(), cid, png, "\n\n".join(parts), silent=quiet_now())
+    return True
 
 async def digest_due(force=False):
     """
@@ -486,7 +601,7 @@ NAV_TEXT = (
     "🔎 <b>Поиск по тегам</b>\n"
     "#изМосквы · #изПитера — откуда вылет\n"
     "#Турция, #Сочи — куда: страна, а по России город\n"
-    "#наВыходные — туда в пт/сб, обратно в вс/пн\n"
+    "#наВыходные — туда в пт/сб, обратно в вс/пн; по четвергам — подборка\n"
     "#до{cheap} — билеты до {cheap_money}\n"
     "#лучшееЗаНеделю — подборка по воскресеньям\n"
     "<i>Здесь теги нажимаются, в постах — долгим нажатием.</i>\n\n"

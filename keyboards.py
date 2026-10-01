@@ -112,6 +112,14 @@ def feed(tab, items):
     return _kb(rows)
 
 
+def morning(items):
+    """Под утренней сводкой: по кнопке на находку — откроет карточку."""
+    return _kb(_grid([_b(f"{i}. {places.name(d['dest'])} −{d['discount']}%"
+                         if d.get("discount") else f"{i}. {places.name(d['dest'])}",
+                         f"deal:{d['origin']}:{d['dest']}")
+                      for i, d in enumerate(items, 1)]))
+
+
 def deal_kb(d, sub="bot"):
     """Под находкой: купить и посмотреть другие даты. sub — метка источника в ссылке."""
     rows = []
@@ -284,6 +292,7 @@ def admin(style):
                 [_b("📣 Пример черновика для канала", "admin:example")],
                 [_b("📌 Закреп с навигацией", "admin:nav"),
                  _b("🏆 Дайджест сейчас", "admin:digest")],
+                [_b("🏖 «Куда на выходные» сейчас", "admin:weekend")],
                 [_b(f"🎨 Оформление: {'новое' if style == 'new' else 'старое'}",
                     "admin:style")]])
 

@@ -6,6 +6,7 @@
 на человека за проход — лучше три отличные находки, чем десять средних.
 """
 import asyncio
+from datetime import date, datetime
 
 from aiogram import Bot
 from aiogram.client.default import DefaultBotProperties
@@ -15,7 +16,11 @@ from aiogram.exceptions import TelegramForbiddenError, TelegramRetryAfter
 
 import config as C
 import db
+import detect
+import keyboards as kb
 import post
+import render
+import ui
 import users
 
 _bot = None
@@ -37,7 +42,6 @@ async def problem(key, text):
     раза в PROBLEM_REPEAT_H часов: сломанный опрос каждые 45 минут не должен
     превращаться в 30 одинаковых сообщений за ночь.
     """
-    from datetime import datetime
     last = db.meta_get(f"problem:{key}")
     if last:
         age = (datetime.now() - datetime.fromisoformat(last)).total_seconds() / 3600
@@ -64,18 +68,33 @@ async def resolved(key, text):
             pass
 
 
+def quiet_now():
+    """Ночь по времени сервера (BOT_QUIET): людей не будим."""
+    start, end = C.BOT_QUIET
+    h = datetime.now().hour
+    return h >= start or h < end if start > end else start <= h < end
+
+
 async def notify(alerts, only=None):
-    """Рассылает находки. Возвращает сколько сообщений ушло."""
+    """
+    Рассылает находки. Возвращает сколько сообщений ушло.
+    Ночью не шлёт, а откладывает: утром morning() пришлёт одной сводкой.
+    """
     bot = make_bot()
     subs = db.active_subs()
     if only is not None:
         subs = [s for s in subs if s["chat_id"] == only]
 
     sent = 0
+    night = quiet_now()
     cache = {}                       # одна картинка на находку, дальше — по file_id
     for s in subs:
         mine = [d for d in alerts if users.wants(s, d)]
         mine.sort(key=lambda d: (-(d.get("discount") or 0), d["price"]))
+        if night:
+            for d in mine[:C.USER_ALERTS_PER_RUN]:
+                db.add_pending(s["chat_id"], detect.key(d), d)
+            continue
         for d in mine[:C.USER_ALERTS_PER_RUN]:
             try:
                 await post.send(bot, s["chat_id"], d, "bot_alert", s["style"], cache)
@@ -88,4 +107,40 @@ async def notify(alerts, only=None):
             except Exception as e:
                 print("  отправка {}: {}".format(s["chat_id"], e))
             await asyncio.sleep(0.05)
+    return sent
+
+
+async def morning():
+    """
+    Утро: ночные находки — каждому одним сообщением. Одна — сразу карточкой,
+    несколько — списком с кнопками; кнопка откроет карточку по свежей ленте,
+    а ушедшую скидку честно покажет календарём направления.
+    """
+    if quiet_now():
+        return 0
+    bot, today, sent = make_bot(), date.today().isoformat(), 0
+    for chat in db.pending_chats():
+        items = [d for d in db.take_pending(chat, C.NIGHT_KEEP)
+                 if (d.get("depart") or today) >= today]
+        s = db.get_sub(chat)
+        if not items or not s or not s["active"]:
+            continue
+        try:
+            if len(items) == 1:
+                await post.send(bot, chat, items[0], "bot_alert", s["style"])
+            else:
+                body = "\n".join(render.feed_item(i, d) for i, d in enumerate(items, 1))
+                await ui.push(bot, chat, ui.screen(
+                    "☀️ <b>Пока ты спал</b>",
+                    f"За ночь нашёл {len(items)} {render.plural(len(items), 'скидку', 'скидки', 'скидок')}:",
+                    body, footer="Нажми — покажу билет. Цены могли измениться 👇"),
+                    kb.morning(items), s["style"] or C.STYLE)
+            sent += 1
+        except TelegramForbiddenError:
+            db.stop_sub(chat)
+        except Exception as e:
+            print(f"  утренняя сводка {chat}: {e}")
+        await asyncio.sleep(0.05)
+    if sent:
+        print(f"  утренние сводки: {sent}")
     return sent

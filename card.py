@@ -168,7 +168,8 @@ def _flight(img, d, hops=1, via=()):
 def digest(title, subtitle, rows, sign=None):
     """
     Картинка дайджеста: заголовок и до шести строк «−55% · маршрут · цена».
-    rows — [(процент, маршрут, цена-строкой), ...].
+    rows — [(процент, маршрут, цена-строкой), ...]. Вместо процента можно
+    строку — она встанет в плашку как есть («пт–вс» у подборки на выходные).
     """
     img = _background()
     d = ImageDraw.Draw(img)
@@ -176,8 +177,11 @@ def digest(title, subtitle, rows, sign=None):
     d.text((X0, 158), subtitle, font=_font("regular", 32), fill=MUTED)
     y, pill = 230, _font("bold", 36)
     for pct, route, price in rows[:6]:
-        txt = f"−{pct}%"
-        color = ACCENT["super"] if pct >= C.SUPER_PCT else ACCENT["deal"]
+        if isinstance(pct, str):
+            txt, color = pct, ACCENT["drop"]
+        else:
+            txt = f"−{pct}%"
+            color = ACCENT["super"] if pct >= C.SUPER_PCT else ACCENT["deal"]
         d.rounded_rectangle([X0, y, X0 + 150, y + 58], radius=29, fill=color)
         d.text((X0 + 75, y + 29), txt, font=pill, fill=WHITE, anchor="mm")
         pf = _font("bold", 40)
