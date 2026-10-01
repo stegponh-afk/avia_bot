@@ -28,6 +28,7 @@ from aiogram.types import (BufferedInputFile, InlineKeyboardButton, InlineKeyboa
 import card
 import config as C
 import db
+import hotels
 import places
 import render
 import tp
@@ -144,6 +145,13 @@ async def enrich(d):
               if day.weekday() in (6, 0) and (day - dep).days <= 3]
         if wk:
             d["weekend"] = pack(min(wk, key=lambda r: r["price"]))
+
+    # отели в городе прилёта на даты поездки — кнопкой под постом
+    try:
+        d["stay"] = await hotels.find(d)
+    except Exception as e:
+        print(f"  отели {d['dest']}: {e}")
+        d["stay"] = None
     return d
 
 
@@ -239,6 +247,9 @@ def channel_kb(d, post_id=None):
         rows.append([InlineKeyboardButton(
             text=f"↩️ Обратно {render.when(b['depart'])} за {render.money(b['price'])}",
             url=tp.buy_link(back, sub + "_back"))])
+    if d.get("stay"):
+        rows.append([InlineKeyboardButton(text=hotels.label(d["stay"]),
+                                          url=hotels.link(d["stay"], sub + "_hotel"))])
     rows.append([InlineKeyboardButton(
         text="🔔 Свои уведомления о скидках",
         url=f"https://t.me/{C.BOT_USERNAME}?start=channel")])

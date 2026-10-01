@@ -11,6 +11,7 @@ from aiogram.types import (InlineKeyboardButton, InlineKeyboardMarkup,
 
 import config as C
 import db
+import hotels
 import places
 import render
 import tp
@@ -146,6 +147,8 @@ def deal_kb(d, sub="bot"):
                 "link": b.get("link")}
         rows.append([_b(f"↩️ Обратно {render.when(b['depart'])} за "
                         f"{render.money(b['price'])}", tp.buy_link(back, sub + "_back"))])
+    if d.get("stay"):              # отели в городе прилёта — если карточка их нашла
+        rows.append([_b(hotels.label(d["stay"]), hotels.link(d["stay"], sub + "_hotel"))])
     dest = d.get("dest")
     if dest and dest != "?" and len(dest) == 3:
         rows.append([_b(f"📅 Все даты · {places.name(dest)}", f"dest:{dest}:{d['origin']}")])

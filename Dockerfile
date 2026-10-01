@@ -21,7 +21,7 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY *.py ./
+COPY *.py otello.json ./
 COPY handlers/ ./handlers/
 
 # всё состояние в /data: база, справочник, сессия Telegram

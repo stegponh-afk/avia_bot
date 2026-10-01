@@ -129,19 +129,29 @@ def via(d):
 _MARKER = re.compile(r"([?&]marker=)[^&#]*")
 
 
-# Параметры партнёрской ссылки tp.media по проектам: {trs: {campaign_id, erid, …}}.
+# Партнёрские программы, на которые бот делает ссылки: у каждой своя кампания
+# и свой erid, поэтому параметры tp.media храним по паре (проект, программа).
+BRANDS = {"aviasales": SITE + "/", "otello": "https://otello.ru/",
+          "ostrovok": "https://ostrovok.ru/"}
+
+# Параметры партнёрской ссылки tp.media: {(trs, программа): {campaign_id, erid, …}}.
 # Узнаём у API раз в сутки (refresh_partner) и храним в базе на случай рестарта.
 _partner = {}
 
 
-def _partner_params(trs):
+def _meta_key(trs, brand):
+    # у Aviasales ключ прежний — чтобы не потерять сохранённое до появления отелей
+    return f"partner:{trs}" if brand == "aviasales" else f"partner:{trs}:{brand}"
+
+
+def _partner_params(trs, brand="aviasales"):
     if not trs:
         return None
-    if trs not in _partner:
+    if (trs, brand) not in _partner:
         import db
-        raw = db.meta_get(f"partner:{trs}")
-        _partner[trs] = json.loads(raw) if raw else None
-    return _partner[trs]
+        raw = db.meta_get(_meta_key(trs, brand))
+        _partner[(trs, brand)] = json.loads(raw) if raw else None
+    return _partner[(trs, brand)]
 
 
 def _without_marker(link):
@@ -153,12 +163,14 @@ def _without_marker(link):
 
 async def refresh_partner():
     """
-    Узнать у Travelpayouts формат партнёрской ссылки для проектов канала и бота.
+    Узнать у Travelpayouts формат партнёрской ссылки для проектов канала и бота
+    по каждой программе из BRANDS.
 
     Ответ API — готовая ссылка tp.media/r?campaign_id=…&erid=…&marker=…&p=…
     &sub_id=…&trs=…&u=…; из неё берём всё, кроме адреса и метки. erid —
     токен маркировки рекламы, он может смениться, поэтому спрашиваем раз
     в сутки, а не зашиваем в код. Не ответило — живём на сохранённом.
+    Программа не подключена в кабинете — её ссылки идут без партнёрки.
     """
     import db
     if not (C.TP_TOKEN and C.TP_MARKER):
@@ -166,42 +178,53 @@ async def refresh_partner():
     async with aiohttp.ClientSession() as s:
         for trs in sorted({C.TP_TRS_CHANNEL, C.TP_TRS_BOT} - {0}):
             body = {"trs": trs, "marker": int(C.TP_MARKER), "shorten": False,
-                    "links": [{"url": SITE + "/", "sub_id": "probe"}]}
+                    "links": [{"url": url, "sub_id": "probe"} for url in BRANDS.values()]}
             try:
                 async with s.post(f"{BASE}/links/v1/create", json=body, timeout=30,
                                   headers={"X-Access-Token": C.TP_TOKEN},
                                   proxy=C.API_PROXY) as r:
                     data = await r.json(content_type=None)
-                url = data["result"]["links"][0]["partner_url"]
-                params = {k: v for k, v in parse_qsl(urlsplit(url).query)
-                          if k not in ("u", "sub_id")}
-                if params.get("trs") != str(trs):
-                    raise ValueError(f"в ответе другой проект: {params}")
-                _partner[trs] = params
-                db.meta_set(f"partner:{trs}", json.dumps(params))
-                print(f"  партнёрские ссылки проекта {trs}: erid {params.get('erid')}")
+                got = data["result"]["links"]
             except Exception as e:
                 print(f"  партнёрские ссылки проекта {trs}: не обновились — {e}")
+                continue
+            for brand, item in zip(BRANDS, got):
+                try:
+                    if item.get("code") != "success":
+                        raise ValueError(item.get("code"))
+                    params = {k: v for k, v in parse_qsl(urlsplit(item["partner_url"]).query)
+                              if k not in ("u", "sub_id")}
+                    if params.get("trs") != str(trs):
+                        raise ValueError(f"в ответе другой проект: {params}")
+                    _partner[(trs, brand)] = params
+                    db.meta_set(_meta_key(trs, brand), json.dumps(params))
+                    print(f"  партнёрские ссылки {brand}, проект {trs}: erid {params.get('erid')}")
+                except Exception as e:
+                    print(f"  партнёрские ссылки {brand}, проект {trs}: нет — {e}")
 
 
-def tagged(link, sub):
+def tagged(link, sub, brand="aviasales"):
     """
     Партнёрская ссылка с меткой источника (SubID): ch_15, bot_alert…
 
     Проекты заданы — ссылка через tp.media в проект канала (метки ch_…)
     или бота (остальные): так в кабинете Travelpayouts видны клики, поиски
     и покупки с разбивкой по проекту и метке. Не заданы или API ещё ни разу
-    не ответило — прямая ссылка marker=728672.метка: покупки считаются,
-    клики нет. В метке допустимы только латиница, цифры и «_».
+    не ответило — у Aviasales прямая ссылка marker=728672.метка: покупки
+    считаются, клики нет; у отелей — просто ссылка на сайт.
+    В метке допустимы только латиница, цифры и «_».
     Ставим при показе, а не при сохранении: в базе ссылки остаются чистыми.
     """
     if not link or not C.TP_MARKER or not sub:
         return link
     sub = re.sub(r"[^A-Za-z0-9_]", "_", str(sub))
-    params = _partner_params(C.TP_TRS_CHANNEL if sub.startswith("ch") else C.TP_TRS_BOT)
+    params = _partner_params(C.TP_TRS_CHANNEL if sub.startswith("ch") else C.TP_TRS_BOT,
+                             brand)
     if params:
         q = dict(params, sub_id=sub, u=_without_marker(link))
         return "https://tp.media/r?" + urlencode(q)
+    if brand != "aviasales":
+        return link
     value = f"{C.TP_MARKER}.{sub}"
     if _MARKER.search(link):
         return _MARKER.sub(lambda m: m.group(1) + value, link, count=1)
