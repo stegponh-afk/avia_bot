@@ -1,0 +1,10 @@
+.git
+.env
+*.db
+*.session
+*.session-journal
+places.json
+__pycache__
+*.pyc
+data/
+README.md

@@ -1,0 +1,15 @@
+# секреты — только на сервере
+.env
+
+# данные и кэши: база, сессии Telethon, справочники, бэкапы
+*.db
+*.db-journal
+*.session
+*.session-journal
+places.json
+routes.json
+data/
+backups/
+
+__pycache__/
+*.pyc

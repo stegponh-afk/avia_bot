@@ -1,0 +1,23 @@
+services:
+  bot:
+    build: .
+    image: avia-bot
+    container_name: avia-bot
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - avia-data:/data          # база, справочник и сессия переживают пересборку
+    logging:                     # иначе логи растут бесконечно
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+    # Раскомментируй, ЕСЛИ поднимаешь не на сервере, а дома за прокси:
+    # тогда в .env пиши socks5://host.docker.internal:10808, потому что
+    # 127.0.0.1 внутри контейнера — это сам контейнер, а не твой v2rayN.
+    # extra_hosts:
+    #   - "host.docker.internal:host-gateway"
+
+volumes:
+  avia-data:
