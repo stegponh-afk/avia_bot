@@ -99,5 +99,6 @@ async def on_inline(q: InlineQuery):
                 results = [_result(i, d) for i, d in enumerate(rows)]
     except Exception as e:
         print(f"  инлайн «{text}»: {e}")
+    print(f"  инлайн «{text}» от {q.from_user.id}: карточек {len(results)}")
     await q.answer(results, cache_time=300, is_personal=True,
                    button=None if results else hint)
