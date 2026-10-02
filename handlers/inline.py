@@ -140,5 +140,7 @@ async def on_inline(q: InlineQuery):
         except Exception as e:
             print(f"  инлайн карточка {d.get('dest')}: {e}")
     print(f"  инлайн «{text}» от {q.from_user.id}: карточек {len(results)}")
-    await q.answer(results, cache_time=300, is_personal=True,
+    # Telegram хранит ответ cache_time секунд и не спрашивает заново:
+    # долгий кэш прятал бы свежие цены и правки карточек
+    await q.answer(results, cache_time=30, is_personal=True,
                    button=None if results else hint)
