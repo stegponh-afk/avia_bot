@@ -1,33 +1,42 @@
 """
 Бот в любом чате: пишешь «@AviaChecker_bot Сочи» — и прямо в переписке
-выбираешь цену, чтобы отправить другу. Каждая такая карточка — с кнопкой
-«Купить» и ссылкой на бота: так бот находят те, кто о нём не слышал.
+выбираешь цену, чтобы отправить другу. Уходит карточка, как в канале:
+картинка с маршрутом, ценой и погодой, под ней подпись и кнопки «Купить»
+и «Следить в боте» — так бот находят те, кто о нём не слышал.
 
   пусто              — лучшие скидки из своего города (из ленты);
   «Сочи»             — самые дешёвые даты из своего города;
   «Киров Москва»     — то же из другого города.
 
+Картинку Telegram берёт по адресу — её отдаёт cardweb.py. Сервер картинок
+не поднят — уходит та же карточка текстом.
+
 Telegram шлёт запрос на каждую набранную букву, поэтому ответы по
 направлению держим в памяти и в API ходим только за новым маршрутом.
 Режим включается у @BotFather: /setinline.
 """
+import asyncio
 import time
 from datetime import date, timedelta
 
 import aiohttp
 from aiogram import Router
 from aiogram.types import (InlineKeyboardButton, InlineKeyboardMarkup, InlineQuery,
-                           InlineQueryResultArticle, InlineQueryResultsButton,
-                           InputTextMessageContent, LinkPreviewOptions)
+                           InlineQueryResultArticle, InlineQueryResultPhoto,
+                           InlineQueryResultsButton, InputTextMessageContent,
+                           LinkPreviewOptions)
 
+import cardweb
 import channel
 import config as C
 import db
 import parse
 import places
+import post
 import render
 import tp
 import users
+import weather
 
 router = Router()
 _cache = {}            # (откуда, куда) -> (когда, строки)
@@ -50,15 +59,30 @@ async def _dates(origin, dest):
     return rows
 
 
+async def _weather(items):
+    """Погода на каждую дату — параллельно и не дольше 4 секунд на всё."""
+    async def one(d):
+        if "weather" not in d:
+            d["weather"] = await weather.for_trip(d["dest"], d["depart"])
+    try:
+        await asyncio.wait_for(asyncio.gather(*(one(d) for d in items)), 4)
+    except Exception:
+        pass                              # не успели — карточки уйдут без погоды
+
+
+def _text(d):
+    """Подпись карточки: то же, что в канале, плюс откуда она."""
+    lines = [f"✈️ <b>{channel.route(d)} — {render.money(d['price'])}</b>", channel.info(d)]
+    if d.get("discount") and d.get("usual"):
+        lines.append(f"обычно от {render.money(d['usual'])}, скидка {d['discount']}%")
+    if d.get("weather"):
+        lines.append(weather.line(d["weather"], places.name(d["dest"])))
+    lines += ["", f"<i>Нашёл @{C.BOT_USERNAME} — следит за скидками на авиабилеты</i>"]
+    return "\n".join(lines)
+
+
 def _result(i, d, title_city=False):
-    """Одна карточка выдачи: заголовок с ценой и сообщение, которое уйдёт в чат."""
-    route = channel.route(d)
-    info = channel.info(d)
-    disc = d.get("discount")
-    text = [f"✈️ <b>{route} — {render.money(d['price'])}</b>", info]
-    if disc and d.get("usual"):
-        text.append(f"обычно от {render.money(d['usual'])}, скидка {disc}%")
-    text += ["", f"<i>Нашёл @{C.BOT_USERNAME} — следит за скидками на авиабилеты</i>"]
+    """Одна карточка выдачи: картинка (или текст), подпись и кнопки."""
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text=f"🎫 Купить за {render.money(d['price'])}",
                               url=tp.buy_link(d, SUB))],
@@ -66,12 +90,22 @@ def _result(i, d, title_city=False):
                               url=f"https://t.me/{C.BOT_USERNAME}?start=inline")]])
     head = f"{places.name(d['dest'])} — {render.money(d['price'])}" if title_city else \
         f"{render.money(d['price'])} · {render.when_wd(d['depart'])}"
-    desc = info + (f" · −{disc}% к обычной" if disc else "")
+    disc = d.get("discount")
+    desc = channel.info(d) + (f" · −{disc}% к обычной" if disc else "")
+    rid = f"{i}-{d['origin']}-{d['dest']}-{d.get('depart')}-{d['price']}"
+    if cardweb.ready():
+        c = post.cand(d)
+        if c["kind"] == "budget":          # в чатах бюджета нет — просто дёшево
+            c = dict(c, kind="found")
+        token = cardweb.put(d, c)
+        return InlineQueryResultPhoto(
+            id=rid, photo_url=cardweb.url(token), thumbnail_url=cardweb.url(token, thumb=True),
+            photo_width=1280, photo_height=720, title=f"✈️ {head}", description=desc,
+            caption=_text(d), parse_mode="HTML", reply_markup=kb)
     return InlineQueryResultArticle(
-        id=f"{i}-{d['origin']}-{d['dest']}-{d.get('depart')}-{d['price']}",
-        title=f"✈️ {head}", description=desc,
+        id=rid, title=f"✈️ {head}", description=desc,
         input_message_content=InputTextMessageContent(
-            message_text="\n".join(text), parse_mode="HTML",
+            message_text=_text(d), parse_mode="HTML",
             link_preview_options=LinkPreviewOptions(is_disabled=True)),
         reply_markup=kb)
 
@@ -82,23 +116,29 @@ async def on_inline(q: InlineQuery):
     home = users.origin(q.from_user.id)
     hint = InlineQueryResultsButton(text="Напиши город — например, Сочи",
                                     start_parameter="inline")
-    results = []
+    items, title_city = [], False
     try:
         if not text:
             today = date.today().isoformat()
-            deals = sorted((d for d in db.load_feed(home)
+            items = sorted((dict(d) for d in db.load_feed(home)
                             if d.get("discount") and (d.get("depart") or "") > today),
                            key=lambda d: -d["discount"])[:8]
-            results = [_result(i, d, title_city=True) for i, d in enumerate(deals)]
+            title_city = True
         else:
             codes = parse._cities(text)
             origin, dest = (codes[0], codes[1]) if len(codes) >= 2 else \
                 (home, codes[0]) if codes else (None, None)
             if dest and dest != origin:
-                rows = await _dates(origin, dest)
-                results = [_result(i, d) for i, d in enumerate(rows)]
+                items = [dict(r) for r in await _dates(origin, dest)]
+        await _weather(items)
     except Exception as e:
         print(f"  инлайн «{text}»: {e}")
+    results = []
+    for i, d in enumerate(items):
+        try:
+            results.append(_result(i, d, title_city))
+        except Exception as e:
+            print(f"  инлайн карточка {d.get('dest')}: {e}")
     print(f"  инлайн «{text}» от {q.from_user.id}: карточек {len(results)}")
     await q.answer(results, cache_time=300, is_personal=True,
                    button=None if results else hint)
