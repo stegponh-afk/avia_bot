@@ -254,14 +254,12 @@ def origin_menu(cur):
 
 def alerts_menu(on):
     """
-    Галочки «что присылать». Скидки — три кнопки в ряд, выбрана одна;
-    остальное включается и выключается независимо. on — множество включённого.
+    Галочки «что присылать»: пять независимых, отмечено — присылаю, нет — нет.
+    on — множество включённого. Суперскидки и все скидки взаимоисключают
+    друг друга (все включают супер), это решает обработчик.
     """
-    lvl = "super" if "super" in on else "deals" if "deals" in on else "off"
-    short = {"off": "🔕 Нет", "super": "🔥 Супер", "deals": "💸 Все"}   # три в ряд
-    rows = [[_b(_mark(lvl == k, short[k]), f"al:lvl:{k}") for k in users.LEVELS]]
-    rows += [[_b(("✅ " if k in on else "⬜ ") + f"{icon} {title}", f"al:t:{k}")]
-             for k, (icon, title, _) in users.EXTRAS.items()]
+    rows = [[_b(("✅ " if k in on else "⬜ ") + f"{icon} {title}", f"al:t:{k}")]
+            for k, (icon, title, _) in users.ALERTS.items()]
     return _kb(rows + [BACK])
 
 

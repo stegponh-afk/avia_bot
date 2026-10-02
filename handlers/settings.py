@@ -133,15 +133,13 @@ async def choose_origin(m: Message, name, code, onboarding=False, screen=None):
 # ---------- что присылать ----------
 
 def alerts_screen(chat_id, note=None):
-    """Экран галочек: что значит каждая и что их можно сочетать."""
-    lvl = [f"{icon} <b>{title}</b> — {desc}"
-           for k, (icon, title, desc) in users.LEVELS.items() if k != "off"]
-    extra = [f"{icon} <b>{title}</b> — {desc}" for icon, title, desc in users.EXTRAS.values()]
+    """Экран галочек: что значит каждая и что присылаю только отмеченное."""
+    lines = [f"{icon} <b>{title}</b> — {desc}" for icon, title, desc in users.ALERTS.values()]
     return ui.screen(
         "🔔 <b>Что присылать</b>",
-        "Включай сколько угодно — пришлю всё, что подходит под любую из галочек.",
-        "<b>Скидки к обычной цене</b> — выбери одно:\n" + "\n".join(lvl),
-        "<b>И ещё, в любом сочетании:</b>\n" + "\n".join(extra),
+        "Присылаю только то, что отмечено галочкой. Можно одно — например, "
+        "только «Мои направления», — можно несколько или всё сразу.",
+        "\n".join(lines),
         note,
         footer="Ночью не пишу: найденное за ночь пришлю утром одним сообщением.")
 
@@ -159,12 +157,15 @@ async def cb_alerts(q: CallbackQuery):
     chat = q.message.chat.id
     _, kind, key = q.data.split(":")
     on = users.alerts(chat)
-    if kind == "lvl" and key in users.LEVELS:
+    if kind == "lvl" and key in users.LEVELS:      # кнопки прошлой версии экрана
         on -= set(users.LEVELS)
         if key != "off":
             on.add(key)
-    elif kind == "t" and key in users.EXTRAS:
+    elif kind == "t" and key in users.ALERTS:
         on ^= {key}
+        # «все скидки» уже включают суперскидки: отметил одно — второе снимаем
+        if key in ("super", "deals") and key in on:
+            on -= {"super", "deals"} - {key}
     else:
         await q.answer()
         return
