@@ -143,7 +143,8 @@ MIGRATIONS = {
         "date_from": "TEXT",     # окно дат вылета, NULL = без ограничения
         "date_to":   "TEXT",
         "style":     "TEXT",     # оформление: old / new, NULL = из конфига
-        "mode":      "TEXT",     # что присылать: super / deals / budget
+        "mode":      "TEXT",     # что присылать: super / deals / budget (до галочек)
+        "alerts":    "TEXT",     # галочки «что присылать»: deals,watch… NULL = из mode
     },
     "posts": {
         "fmt": "TEXT",           # rich = новый вид, NULL/photo = картинка с подписью
@@ -419,6 +420,11 @@ def set_style(chat_id, style):
 
 def set_mode(chat_id, mode):
     _set(chat_id, mode=mode)
+
+
+def set_alerts(chat_id, alerts):
+    """Галочки «что присылать». Пустое множество — не присылать ничего."""
+    _set(chat_id, alerts=",".join(sorted(alerts)))
 
 
 def has_recent(origin, hours):

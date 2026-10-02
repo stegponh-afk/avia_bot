@@ -68,7 +68,7 @@ def screen(chat_id, tab):
     items = deals_for(chat_id)[:10]
     if not items:
         waiting = ("Я проверяю цены каждые {} минут и сразу напишу, как появятся."
-                   .format(C.POLL_EVERY_MIN) if users.mode(chat_id) != "off"
+                   .format(C.POLL_EVERY_MIN) if users.alerts(chat_id) - {"watch", "weekend"}
                    else "Уведомления выключены — включить можно в ⚙️ Настройках.")
         return (ui.screen("🔥 <b>Скидки сейчас</b>",
                           f"вылет из города {origin}",

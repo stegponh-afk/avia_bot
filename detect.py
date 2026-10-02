@@ -163,7 +163,7 @@ def corridor():
     hi = 0
     try:
         for s in db.active_subs():
-            if users.mode_of(s) == "budget" and users.budget_of(s):
+            if "budget" in users.alerts_of(s) and users.budget_of(s):
                 hi = max(hi, users.budget_of(s))
     except Exception:
         pass

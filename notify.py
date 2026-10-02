@@ -144,3 +144,45 @@ async def morning():
     if sent:
         print(f"  утренние сводки: {sent}")
     return sent
+
+
+async def weekend_due(force=False):
+    """
+    «Куда на выходные» в личку — тем, у кого включена эта галочка, в тот же
+    день и час, что и в канале. Подборка своя для каждого города вылета:
+    считаем один раз на город, рассылаем всем из него. Меньше двух
+    вариантов — этому городу в эту неделю не пишем.
+    """
+    import channel
+    now = datetime.now()
+    week = now.strftime("%G-%V")
+    if not force:
+        if now.weekday() != C.CHANNEL_WEEKEND_DAY or now.hour < C.CHANNEL_WEEKEND_HOUR:
+            return 0
+        if db.meta_get("weekend_bot_week") == week:
+            return 0
+    db.meta_set("weekend_bot_week", week)
+    subs = [s for s in db.active_subs() if "weekend" in users.alerts_of(s)]
+    if not subs:
+        return 0
+    bot, posts, sent = make_bot(), {}, 0
+    for s in subs:
+        origin = s["origin"] or C.ORIGIN
+        if origin not in posts:
+            picks = await channel.weekend_picks(origin)
+            posts[origin] = (channel.weekend_post({origin: picks}, sub="bot_weekend", tags=False)
+                             if len(picks) >= 2 else None)
+        if not posts[origin]:
+            continue
+        png, text = posts[origin]
+        try:
+            await channel.send_post(bot, s["chat_id"], png, text,
+                                    rich_ok=(s["style"] or C.STYLE) == ui.NEW)
+            sent += 1
+        except TelegramForbiddenError:
+            db.stop_sub(s["chat_id"])
+        except Exception as e:
+            print(f"  выходные в бот {s['chat_id']}: {e}")
+        await asyncio.sleep(0.05)
+    print(f"  выходные в бот: городов {len(posts)}, сообщений {sent}")
+    return sent

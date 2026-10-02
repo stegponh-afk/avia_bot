@@ -34,8 +34,8 @@ def text(chat_id):
     subs = db.active_subs()
     modes = {}
     for s in subs:
-        m = users.mode_of(s)
-        modes[m] = modes.get(m, 0) + 1
+        for m in users.alerts_of(s) or {"ничего"}:
+            modes[m] = modes.get(m, 0) + 1
     return ui.screen(
         "🛠 <b>Служебное</b>",
         ui.rows_block([

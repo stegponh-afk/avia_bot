@@ -35,7 +35,10 @@ def screen(chat_id):
             footer="Нажми «➕ Добавить» или просто напиши два города: "
                    "<code>Киров Москва</code>"), kb.watch_list(ws))
     body = "\n".join(watch.line(i, w) for i, w in enumerate(ws, 1))
-    return (ui.screen("🔔 <b>Мои направления</b>", body, watch.RULES,
+    muted = ("🔕 <i>Уведомления по направлениям выключены — цены здесь обновляются, "
+             "но писать не буду. Включить: ⚙️ Настройки → 🔔 Что присылать.</i>"
+             if "watch" not in users.alerts(chat_id) else None)
+    return (ui.screen("🔔 <b>Мои направления</b>", body, muted or watch.RULES,
                       footer="Нажми маршрут — покажу все даты 👇"), kb.watch_list(ws))
 
 

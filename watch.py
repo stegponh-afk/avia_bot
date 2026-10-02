@@ -148,6 +148,10 @@ async def check():
             continue
         if what != "send":
             continue
+        if "watch" not in users.alerts_of(sub):
+            # уведомления по направлениям выключены: цену видно в списке,
+            # «известную» не двигаем — включит снова, узнает о падении
+            continue
         d["watch_id"] = w["id"]
         try:
             await post.send(bot, w["chat_id"], d, "bot_watch", sub["style"])

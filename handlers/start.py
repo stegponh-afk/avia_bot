@@ -57,11 +57,10 @@ async def cmd_menu(m: Message, state: FSMContext):
 
 async def home(m: Message):
     """Экран для тех, кто уже с нами: где он и что умеет бот."""
-    icon, title, _ = users.MODES[users.mode(m.chat.id)]
     await say(m, ui.screen(
         "✈️ <b>Дешёвые билеты</b>",
         ui.rows_block([f"Вылет: <b>{places.name(users.origin(m.chat.id))}</b>",
-                       f"Присылаю: {icon} <b>{title.lower()}</b>"]),
+                       f"Присылаю: <b>{users.summary(users.get(m.chat.id))}</b>"]),
         HOW_TO), kb.main(m.chat.id))
 
 

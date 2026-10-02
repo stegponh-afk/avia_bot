@@ -292,12 +292,13 @@ def rich(png, text, kb=None):
     return InputRichMessage(blocks=blocks)
 
 
-async def send_post(bot, chat_id, png, text, kb=None, silent=False):
+async def send_post(bot, chat_id, png, text, kb=None, silent=False, rich_ok=None):
     """
     Отправить пост. Возвращает (сообщение, формат: rich / photo).
+    rich_ok — новый вид или нет; не задан — как в канале (CHANNEL_RICH).
     Новый вид не принят — уходит картинкой с подписью: пусть проще, но выйдет.
     """
-    if C.CHANNEL_RICH:
+    if C.CHANNEL_RICH if rich_ok is None else rich_ok:
         try:
             msg = await bot.send_rich_message(chat_id, rich_message=rich(png, text, kb),
                                               disable_notification=silent)
@@ -450,7 +451,7 @@ async def publisher():
     import traceback
     import notify
     while True:
-        for rubric in (digest_due, weekend_due):
+        for rubric in (digest_due, weekend_due, notify.weekend_due):
             try:
                 await rubric()
             except Exception:
@@ -521,6 +522,17 @@ async def weekend_due(force=False):
         print("  выходные: вариантов меньше трёх, подборку пропускаю")
         return False
 
+    from notify import make_bot
+    png, text = weekend_post(picks)
+    await send_post(make_bot(), cid, png, text, silent=quiet_now())
+    return True
+
+
+def weekend_post(picks, sub="ch_weekend", tags=True):
+    """
+    Картинка и текст подборки «Куда на выходные». picks — {город вылета:
+    [поездки из weekend_picks]}. Общая для канала и для бота (sub, tags).
+    """
     # даты в заголовке — от самого раннего вылета до самого позднего возвращения
     every = [d for v in picks.values() for d in v]
     a = date.fromisoformat(min(d["depart"] for d in every))
@@ -541,18 +553,17 @@ async def weekend_due(force=False):
         rows += [(days(d), route(d), render.money(d["total"])) for d in items[:3]]
         lines = [f"<b>{names.get(origin, 'Из ' + places.name(origin))}</b>"]
         for i, d in enumerate(items, 1):
-            url = tp.buy_link(dict(d, ret=d["weekend"]["depart"]), "ch_weekend")
+            url = tp.buy_link(dict(d, ret=d["weekend"]["depart"]), sub)
             lines.append(f'{i}. <a href="{url}">{places.name(d["dest"])}</a> — '
                          f'{render.money(d["total"])} · {days(d)}, '
                          f'{render.when(d["depart"])} → {render.when(d["weekend"]["depart"])}')
         parts.append("\n".join(lines))
     parts.append("<i>Цена — за оба билета на момент публикации. "
                  "Нажми город — откроется поиск туда-обратно на эти даты.</i>")
-    parts.append("#наВыходные #подборка")
+    if tags:
+        parts.append("#наВыходные #подборка")
     png = card.digest("Куда на выходные", f"{span} · туда и обратно, за два билета", rows[:6])
-    from notify import make_bot
-    await send_post(make_bot(), cid, png, "\n\n".join(parts), silent=quiet_now())
-    return True
+    return png, "\n\n".join(parts)
 
 async def digest_due(force=False):
     """

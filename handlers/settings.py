@@ -26,14 +26,14 @@ router = Router()
 
 
 def text(chat_id, note=None):
-    icon, title, note = users.MODES[users.mode(chat_id)]
     b = users.budget(chat_id)
     a, bb = users.dates(chat_id)
     lines = [
         f"🛫 Откуда: <b>{places.full(users.origin(chat_id))}</b>",
-        f"🔔 Присылаю: <b>{title.lower()}</b> — {note}",
+        f"🔔 Присылаю: <b>{users.summary(users.get(chat_id))}</b>",
         f"💰 Бюджет: <b>{('до ' + render.money(b)) if b else 'без ограничения'}</b>",
         f"📅 Когда: <b>{render.dates(a, bb)}</b>",
+        f"🎨 Оформление: <b>{STYLES[users.style(chat_id)]}</b>",
     ]
     return ui.screen("⚙️ <b>Настройки</b>", ui.rows_block(lines), note,
                      footer="Что поменять? 👇")
@@ -132,32 +132,93 @@ async def choose_origin(m: Message, name, code, onboarding=False, screen=None):
 
 # ---------- что присылать ----------
 
+def alerts_screen(chat_id, note=None):
+    """Экран галочек: что значит каждая и что их можно сочетать."""
+    lvl = [f"{icon} <b>{title}</b> — {desc}"
+           for k, (icon, title, desc) in users.LEVELS.items() if k != "off"]
+    extra = [f"{icon} <b>{title}</b> — {desc}" for icon, title, desc in users.EXTRAS.values()]
+    return ui.screen(
+        "🔔 <b>Что присылать</b>",
+        "Включай сколько угодно — пришлю всё, что подходит под любую из галочек.",
+        "<b>Скидки к обычной цене</b> — выбери одно:\n" + "\n".join(lvl),
+        "<b>И ещё, в любом сочетании:</b>\n" + "\n".join(extra),
+        note,
+        footer="Ночью не пишу: найденное за ночь пришлю утром одним сообщением.")
+
+
 @router.callback_query(F.data == "set:mode")
 async def cb_mode_menu(q: CallbackQuery):
-    cur = users.mode(q.message.chat.id)
-    lines = [f"{icon} <b>{title}</b> — {note}"
-             for icon, title, note in users.MODES.values()]
-    await edit(q.message, ui.screen("🔔 <b>Что присылать?</b>", ui.rows_block(lines)),
-               kb.mode_menu(cur))
+    chat = q.message.chat.id
+    await edit(q.message, alerts_screen(chat), kb.alerts_menu(users.alerts(chat)))
     await q.answer()
+
+
+@router.callback_query(F.data.startswith("al:"))
+async def cb_alerts(q: CallbackQuery):
+    """Нажатие галочки: меняем и перерисовываем тот же экран."""
+    chat = q.message.chat.id
+    _, kind, key = q.data.split(":")
+    on = users.alerts(chat)
+    if kind == "lvl" and key in users.LEVELS:
+        on -= set(users.LEVELS)
+        if key != "off":
+            on.add(key)
+    elif kind == "t" and key in users.EXTRAS:
+        on ^= {key}
+    else:
+        await q.answer()
+        return
+    db.add_sub(chat, q.from_user.full_name)       # заодно включает выключенного
+    db.set_alerts(chat, on)
+    note = None
+    if "budget" in on and not users.budget(chat):
+        note = "⚠️ Бюджет пока без ограничения — задай его в «💰 Бюджет», иначе эта галочка ничего не добавит."
+    elif not on:
+        note = "Сейчас не присылаю ничего — скидки можно смотреть в «🔥 Скидки»."
+    await edit(q.message, alerts_screen(chat, note), kb.alerts_menu(on))
+    await q.answer("Сохранено")
 
 
 @router.callback_query(F.data.startswith("mode:"))
 async def cb_mode(q: CallbackQuery):
+    """Кнопки прошлой версии экрана: режим переводим в галочки."""
     chat, mode = q.message.chat.id, q.data.split(":", 1)[1]
-    if mode not in users.MODES:
+    ensure(chat, q.from_user.full_name)
+    on = {"super": {"super", "watch"}, "deals": {"deals", "watch"},
+          "budget": {"budget", "watch"}}.get(mode, set())
+    db.add_sub(chat, q.from_user.full_name)
+    db.set_alerts(chat, on)
+    await edit(q.message, alerts_screen(chat), kb.alerts_menu(on))
+    await q.answer("Сохранено")
+
+
+# ---------- оформление ----------
+
+STYLES = {ui.NEW: "новое", ui.OLD: "обычное"}
+
+
+@router.callback_query(F.data == "set:style")
+async def cb_style_menu(q: CallbackQuery):
+    await edit(q.message, ui.screen(
+        "🎨 <b>Оформление сообщений</b>",
+        ui.rows_block(["✨ <b>Новое</b> — заголовки, блоки и кнопки внутри сообщения",
+                       "📄 <b>Обычное</b> — простой текст, кнопки под ним"]),
+        "Если сообщения бота выглядят странно или не открываются — включи обычное: "
+        "новый вид поддерживают не все версии Telegram."),
+        kb.style_menu(users.style(q.message.chat.id)))
+    await q.answer()
+
+
+@router.callback_query(F.data.startswith("style:"))
+async def cb_style(q: CallbackQuery):
+    chat, style = q.message.chat.id, q.data.split(":", 1)[1]
+    if style not in STYLES:
         await q.answer()
         return
-    if mode == "off":
-        ensure(chat, q.from_user.full_name)
-        db.stop_sub(chat)
-    else:
-        db.add_sub(chat, q.from_user.full_name)       # заодно включает выключенного
-        db.set_mode(chat, mode)
-    note = None
-    if mode == "budget" and not users.budget(chat):
-        note = "Бюджет пока без ограничения — задай его, иначе буду слать только скидки."
-    await edit(q.message, text(chat, note), kb.settings())
+    ensure(chat, q.from_user.full_name)
+    db.set_style(chat, style)
+    # edit сам пришлёт новое сообщение, если старое другого вида
+    await edit(q.message, text(chat, f"Оформление: {STYLES[style]}."), kb.settings())
     await q.answer("Сохранено")
 
 

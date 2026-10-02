@@ -1,9 +1,14 @@
 """
 Настройки подписчика и решение «слать ли ему эту находку».
 
-Настроек у человека четыре, и все понятны без объяснений: откуда летает,
-что присылать, бюджет и когда хочет лететь. Всё остальное — пороги,
-источники, оформление — решает бот или админ.
+Настройки понятны без объяснений: откуда летает, что присылать, бюджет,
+когда хочет лететь и как выглядят сообщения. Пороги и источники решает
+бот или админ.
+
+«Что присылать» — набор галочек, их можно сочетать как угодно:
+уровень скидок (нет / только суперскидки / все), «дешевле бюджета»,
+«мои направления» и «куда на выходные». Хранится строкой в subs.alerts:
+«deals,watch». Пусто — не присылать ничего.
 """
 import config as C
 import db
@@ -16,6 +21,56 @@ MODES = {
     "budget": ("✈️", "Всё дешевле бюджета", "любой билет в пределах бюджета"),
     "off":    ("🔕", "Ничего", "загляну сам"),
 }
+
+# уровень скидок — один из трёх; остальное — независимые галочки
+LEVELS = {
+    "off":   ("🔕", "Без скидок", ""),
+    "super": ("🔥", "Суперскидки", f"от {C.SUPER_PCT}%, редко, но метко"),
+    "deals": ("💸", "Все скидки", f"от {C.DEAL_PCT}% к обычной цене маршрута"),
+}
+EXTRAS = {
+    "budget":  ("✈️", "Дешевле бюджета", "любой билет в пределах бюджета, даже без скидки"),
+    "watch":   ("🔔", "Мои направления", "когда дешевеет маршрут, за которым ты следишь"),
+    "weekend": ("🏖", "Куда на выходные", "по четвергам — поездки на выходные из твоего города"),
+}
+
+# старый режим -> галочки: у кого выбор был сделан до галочек, он сохраняется
+_FROM_MODE = {"super": {"super", "watch"}, "deals": {"deals", "watch"},
+              "budget": {"budget", "watch"}, "off": set()}
+
+
+def alerts_of(s):
+    """Включённые уведомления человека: множество из LEVELS (кроме off) и EXTRAS."""
+    if not s:
+        return set(_FROM_MODE.get(C.MODE, {"deals", "watch"}))
+    if s["alerts"] is not None:
+        return {x for x in s["alerts"].split(",") if x}
+    if not s["active"]:
+        return set()
+    return set(_FROM_MODE.get(mode_of(s), {"deals", "watch"}))
+
+
+def alerts(chat_id):
+    return alerts_of(get(chat_id))
+
+
+def level_of(s):
+    a = alerts_of(s)
+    return "super" if "super" in a else "deals" if "deals" in a else "off"
+
+
+def summary(s):
+    """«💸 все скидки · 🔔 мои направления» — одной строкой для экранов."""
+    a = alerts_of(s) if (not s or s["active"]) else set()
+    parts = []
+    lvl = level_of(s) if a else "off"
+    if lvl != "off":
+        icon, title, _ = LEVELS[lvl]
+        parts.append(f"{icon} {title.lower()}")
+    for k, (icon, title, _) in EXTRAS.items():
+        if k in a:
+            parts.append(f"{icon} {title.lower()}")
+    return " · ".join(parts) or "🔕 ничего — загляну сам"
 
 
 def get(chat_id):
@@ -121,11 +176,12 @@ def wants(s, d):
     """
     if not fits(s, d):
         return False
-    m = mode_of(s)
+    a = alerts_of(s)
+    if "budget" in a and budget_of(s):
+        return True
+    m = level_of(s)
     if m == "off":
         return False
-    if m == "budget" and budget_of(s):
-        return True
     disc = d.get("discount") or 0
     if "связка" in (d.get("why") or []):
         return disc >= (C.SUPER_PCT if m == "super" else C.COMBO_MIN_SAVE_PCT)

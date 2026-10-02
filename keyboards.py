@@ -241,7 +241,8 @@ def trip_kb(res):
 
 def settings():
     return _kb([[_b("🛫 Откуда", "set:origin"), _b("🔔 Что присылать", "set:mode")],
-                [_b("💰 Бюджет", "set:budget"), _b("📅 Когда", "set:dates")]])
+                [_b("💰 Бюджет", "set:budget"), _b("📅 Когда", "set:dates")],
+                [_b("🎨 Оформление", "set:style")]])
 
 
 BACK = [_b("⬅️ Назад", "set:home")]
@@ -251,10 +252,22 @@ def origin_menu(cur):
     return _kb(cities("origin", cur) + [BACK])
 
 
-def mode_menu(cur):
-    rows = [[_b(_mark(cur == k, f"{icon} {title}"), f"mode:{k}")]
-            for k, (icon, title, _) in users.MODES.items()]
+def alerts_menu(on):
+    """
+    Галочки «что присылать». Скидки — три кнопки в ряд, выбрана одна;
+    остальное включается и выключается независимо. on — множество включённого.
+    """
+    lvl = "super" if "super" in on else "deals" if "deals" in on else "off"
+    short = {"off": "🔕 Нет", "super": "🔥 Супер", "deals": "💸 Все"}   # три в ряд
+    rows = [[_b(_mark(lvl == k, short[k]), f"al:lvl:{k}") for k in users.LEVELS]]
+    rows += [[_b(("✅ " if k in on else "⬜ ") + f"{icon} {title}", f"al:t:{k}")]
+             for k, (icon, title, _) in users.EXTRAS.items()]
     return _kb(rows + [BACK])
+
+
+def style_menu(cur):
+    return _kb([[_b(_mark(cur == "new", "✨ Новое"), "style:new"),
+                 _b(_mark(cur == "old", "📄 Обычное"), "style:old")], BACK])
 
 
 def budget_menu(cur):
