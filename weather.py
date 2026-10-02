@@ -5,6 +5,7 @@
 вперёд; дальше показываем, какая погода была в эти же даты год назад
 (архив), и честно пишем «обычно». Не ответил — пост выходит без погоды.
 """
+import asyncio
 import time
 from collections import Counter
 from datetime import date, timedelta
@@ -19,6 +20,15 @@ ARCHIVE = "https://archive-api.open-meteo.com/v1/archive"
 HORIZON = 15          # дальше прогноза нет — берём прошлый год
 _cache = {}           # (код, с, по) -> (когда спросили, ответ)
 TTL = 3 * 3600
+FAIL_TTL = 10 * 60    # не ответил — переспросим скоро, а не через три часа
+_gate = None          # не больше двух запросов разом: на шесть сразу сервис отказывает
+
+
+def _semaphore():
+    global _gate
+    if _gate is None:
+        _gate = asyncio.Semaphore(2)
+    return _gate
 
 
 def _icon(code):
@@ -51,7 +61,7 @@ async def for_trip(code, start, end=None):
     b = date.fromisoformat(end[:10]) if end else a + timedelta(days=2)
     b = min(b, a + timedelta(days=13))
     key = (code, a, b)
-    if key in _cache and time.time() - _cache[key][0] < TTL:
+    if key in _cache and time.time() - _cache[key][0] < (TTL if _cache[key][1] else FAIL_TTL):
         return _cache[key][1]
 
     usual = a > date.today() + timedelta(days=HORIZON)
@@ -65,11 +75,14 @@ async def for_trip(code, start, end=None):
               "daily": "temperature_2m_max,temperature_2m_min,weather_code",
               "start_date": a2.isoformat(), "end_date": b2.isoformat()}
     try:
-        async with aiohttp.ClientSession() as s:
+        async with _semaphore(), aiohttp.ClientSession() as s:
             async with s.get(url, params=params, timeout=aiohttp.ClientTimeout(total=10),
                              proxy=C.API_PROXY) as r:
-                data = (await r.json(content_type=None)).get("daily") or {}
-        hi = [t for t in data.get("temperature_2m_max") or [] if t is not None]
+                body = await r.json(content_type=None)
+        if body.get("error"):
+            raise ValueError(body.get("reason") or "ошибка сервиса")
+        data = body.get("daily") or {}
+        hi =[t for t in data.get("temperature_2m_max") or [] if t is not None]
         lo = [t for t in data.get("temperature_2m_min") or [] if t is not None]
         codes = [c for c in data.get("weather_code") or [] if c is not None]
         if not hi or not lo:

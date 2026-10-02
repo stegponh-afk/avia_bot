@@ -30,7 +30,8 @@ from aiogram.exceptions import TelegramRetryAfter
 from aiogram.types import (BufferedInputFile, InlineKeyboardButton, InlineKeyboardMarkup,
                            InlineQuery, InlineQueryResultArticle,
                            InlineQueryResultCachedPhoto, InlineQueryResultsButton,
-                           InputTextMessageContent, LinkPreviewOptions)
+                           InputMediaPhoto, InputTextMessageContent,
+                           LinkPreviewOptions)
 from PIL import Image
 
 import channel
@@ -83,7 +84,7 @@ def _cand(d):
     return dict(c, kind="found") if c["kind"] == "budget" else c   # в чатах бюджета нет
 
 
-_inflight = {}         # карточка -> задача загрузки: одна карточка грузится один раз
+_inflight = {}         # карточка -> future с file_id: одна карточка грузится один раз
 
 
 def _jpeg(png):
@@ -94,72 +95,87 @@ def _jpeg(png):
     return out.getvalue()
 
 
-async def _upload(bot, store, d, c, key):
+def _key(d, c):
+    return (d["origin"], d["dest"], d.get("depart"), d["price"], c["kind"], c.get("pct"),
+            (d.get("weather") or {}).get("day"))
+
+
+async def _send(bot, store, datas):
     """
-    Нарисовать карточку, загрузить в служебный канал, запомнить file_id
-    и удалить сообщение. Telegram просит подождать (лимит сообщений
-    в канал) — ждём и пробуем ещё раз.
+    Загрузить картинки одним запросом: альбомом, если их больше одной.
+    Альбом — одно обращение к Telegram вместо шести, и лимит на сообщения
+    в канал не тормозит. Просит подождать — ждём и пробуем ещё раз.
     """
-    data = await asyncio.to_thread(lambda: _jpeg(post.image(d, c)))
     for attempt in range(3):
         try:
-            msg = await bot.send_photo(store, BufferedInputFile(data, "card.jpg"),
-                                       disable_notification=True)
-            break
+            if len(datas) == 1:
+                return [await bot.send_photo(store, BufferedInputFile(datas[0], "c.jpg"),
+                                             disable_notification=True)]
+            return await bot.send_media_group(
+                store, [InputMediaPhoto(media=BufferedInputFile(x, f"c{i}.jpg"))
+                        for i, x in enumerate(datas)], disable_notification=True)
         except TelegramRetryAfter as e:
             if attempt == 2:
                 raise
             await asyncio.sleep(e.retry_after + 0.5)
-    fid = msg.photo[-1].file_id
-    _photos[key] = (time.time(), fid)
+
+
+async def _batch(bot, store, jobs):
+    """
+    jobs — [(ключ, находка, разметка)]: нарисовать все параллельно, загрузить
+    альбомами по 10, разложить file_id по ожидающим и убрать сообщения.
+    """
     try:
-        await bot.delete_message(store, msg.message_id)   # file_id живёт и без сообщения
+        datas = await asyncio.gather(*(asyncio.to_thread(lambda d=d, c=c: _jpeg(post.image(d, c)))
+                                       for _, d, c in jobs))
+        for i in range(0, len(jobs), 10):
+            part, msgs = jobs[i:i + 10], await _send(bot, store, datas[i:i + 10])
+            for (key, _, _), m in zip(part, msgs):
+                fid = m.photo[-1].file_id
+                _photos[key] = (time.time(), fid)
+                fut = _inflight.pop(key, None)
+                if fut and not fut.done():
+                    fut.set_result(fid)
+            try:                                  # file_id живёт и без сообщения
+                await bot.delete_messages(store, [m.message_id for m in msgs])
+            except Exception as e:
+                print(f"  инлайн: не удалил картинки из хранилища — {e}")
     except Exception as e:
-        print(f"  инлайн: не удалил картинку из хранилища — {e}")
-    return fid
-
-
-def _task(bot, store, d):
-    """Задача загрузки карточки: готовая из памяти, уже идущая или новая."""
-    c = _cand(d)
-    key = (d["origin"], d["dest"], d.get("depart"), d["price"], c["kind"], c.get("pct"),
-           (d.get("weather") or {}).get("day"))
-    hit = _photos.get(key)
-    if hit and time.time() - hit[0] < PHOTO_TTL:
-        done = asyncio.get_running_loop().create_future()
-        done.set_result(hit[1])
-        return done
-    if key not in _inflight:
-        t = asyncio.create_task(_upload(bot, store, d, c, key))
-
-        def finished(task, k=key):
-            _inflight.pop(k, None)
-            if not task.cancelled() and task.exception():   # догружалась в фоне и упала
-                print(f"  инлайн картинка {k[1]}: {task.exception()}")
-        t.add_done_callback(finished)
-        _inflight[key] = t
-    return _inflight[key]
+        print(f"  инлайн: картинки не загрузились — {type(e).__name__}: {e}")
+        for key, _, _ in jobs:
+            fut = _inflight.pop(key, None)
+            if fut and not fut.done():
+                fut.set_result(None)
 
 
 async def _photos_for(bot, items):
     """
-    file_id карточек по порядку, None — не успели или нет хранилища.
-    Не успели за 6 секунд — отвечаем текстом, но загрузку не бросаем:
-    она доедет в фоне, и следующий запрос уже будет с картинками.
+    file_id карточек по порядку, None — нет картинки. Ждём до 7 секунд;
+    не успели — загрузка не бросается, доедет в фоне, и следующий запрос
+    уже будет с картинками.
     """
     store = db.meta_get("storage_chat")
     if not store or not items:
         return [None] * len(items)
-    tasks = [_task(bot, int(store), d) for d in items]
-    await asyncio.wait(tasks, timeout=6)
-    out = []
-    for d, t in zip(items, tasks):
-        if t.done() and not t.cancelled() and t.exception() is None:
-            out.append(t.result())
+    loop = asyncio.get_running_loop()
+    futs, jobs = [], []
+    for d in items:
+        c = _cand(d)
+        key = _key(d, c)
+        hit = _photos.get(key)
+        if hit and time.time() - hit[0] < PHOTO_TTL:
+            f = loop.create_future()
+            f.set_result(hit[1])
+        elif key in _inflight:
+            f = _inflight[key]
         else:
-            if t.done() and not t.cancelled():
-                print(f"  инлайн картинка {d.get('dest')}: {t.exception()}")
-            out.append(None)
+            f = _inflight[key] = loop.create_future()
+            jobs.append((key, d, c))
+        futs.append(f)
+    if jobs:
+        asyncio.create_task(_batch(bot, int(store), jobs))
+    await asyncio.wait(futs, timeout=7)
+    out = [f.result() if f.done() else None for f in futs]
     if None in out:
         print(f"  инлайн: картинок готово {len(out) - out.count(None)} из {len(out)}, "
               "остальные догружаются в фоне")
@@ -225,8 +241,15 @@ async def on_inline(q: InlineQuery):
     except Exception as e:
         print(f"  инлайн «{text}»: {e}")
     photos = await _photos_for(q.bot, items)
+    if any(photos):
+        # без смеси: картинки и текст вперемешку на телефоне выглядят как
+        # «не то не сё» — показываем только готовые картинки, остальные
+        # догрузятся и появятся при следующем запросе
+        pairs = [(d, ph) for d, ph in zip(items, photos) if ph]
+    else:
+        pairs = list(zip(items, photos))
     results = []
-    for i, (d, ph) in enumerate(zip(items, photos)):
+    for i, (d, ph) in enumerate(pairs):
         try:
             results.append(_result(i, d, ph, title_city))
         except Exception as e:
