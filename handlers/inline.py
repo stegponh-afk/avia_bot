@@ -190,9 +190,12 @@ def _result(i, d, photo=None, title_city=False):
     desc = channel.info(d) + (f" · −{disc}% к обычной" if disc else "")
     rid = f"{i}-{d['origin']}-{d['dest']}-{d.get('depart')}-{d['price']}"
     if photo:
+        # без заголовка и описания: с ними Telegram на телефоне рисует список
+        # с пустым местом справа, без них — сетку крупных картинок, а цена,
+        # дата и маршрут и так крупно на самой карточке
         return InlineQueryResultCachedPhoto(
-            id=rid, photo_file_id=photo, title=f"✈️ {head}", description=desc,
-            caption=_text(d), parse_mode="HTML", reply_markup=kb)
+            id=rid, photo_file_id=photo, caption=_text(d), parse_mode="HTML",
+            reply_markup=kb)
     return InlineQueryResultArticle(
         id=rid, title=f"✈️ {head}", description=desc,
         input_message_content=InputTextMessageContent(
