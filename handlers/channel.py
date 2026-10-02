@@ -71,7 +71,15 @@ async def on_channel_rights(ev: ChatMemberUpdated):
     can_post = st.status == "creator" or (
         st.status == "administrator" and bool(getattr(st, "can_post_messages", False)))
     title = ev.chat.title or ev.chat.username or ev.chat.id
-    if can_post and is_owner(ev.from_user.id):
+    main = db.channel_id()
+    if can_post and is_owner(ev.from_user.id) and main and str(main) != str(ev.chat.id):
+        # основной канал уже есть — второй канал служебный: в него бот
+        # загружает картинки карточек для ответов в чатах (@бот Сочи)
+        db.meta_set("storage_chat", ev.chat.id)
+        text = (f"📦 Канал «{title}» подключён как хранилище картинок для бота в чатах. "
+                "Подписчиков туда звать не нужно, публиковать в него ничего не буду — "
+                "картинки загружаются и сразу удаляются.")
+    elif can_post and is_owner(ev.from_user.id):
         db.meta_set("channel_id", ev.chat.id)
         text = (f"📣 Канал «{title}» подключён (id <code>{ev.chat.id}</code>). "
                 "Черновики буду присылать сюда, публиковать — туда.")
@@ -81,6 +89,8 @@ async def on_channel_rights(ev: ChatMemberUpdated):
     elif st.status in ("left", "kicked"):
         if db.meta_get("channel_id") == str(ev.chat.id):
             db.meta_set("channel_id", "")
+        if db.meta_get("storage_chat") == str(ev.chat.id):
+            db.meta_set("storage_chat", "")
         text = f"📣 Меня убрали из «{title}» — публиковать туда больше не могу."
     else:
         text = f"📣 «{title}»: мой статус {st.status}. Чтобы публиковать, сделай меня админом."

@@ -64,9 +64,6 @@ async def main():
         asyncio.create_task(poll.loop(bot.notify, channel.on_poll), name="опрос цен"),
         asyncio.create_task(channel.publisher(), name="автопубликация"),
     ]
-    if C.WEB_URL:
-        import cardweb
-        tasks.append(asyncio.create_task(cardweb.serve(), name="картинки для чатов"))
     if C.TG_WATCH_ENABLED and C.TG_CHANNELS:
         tasks.append(asyncio.create_task(tgwatch.watch(on_channel_post), name="каналы"))
 

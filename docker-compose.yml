@@ -5,8 +5,6 @@ services:
     container_name: avia-bot
     restart: unless-stopped
     env_file: .env
-    ports:
-      - "8090:8090"              # картинки карточек для бота в чатах (cardweb.py)
     volumes:
       - avia-data:/data          # база, справочник и сессия переживают пересборку
     logging:                     # иначе логи растут бесконечно

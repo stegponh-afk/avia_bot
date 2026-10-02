@@ -8,8 +8,12 @@
   «Сочи»             — самые дешёвые даты из своего города;
   «Киров Москва»     — то же из другого города.
 
-Картинку Telegram берёт по адресу — её отдаёт cardweb.py. Сервер картинок
-не поднят — уходит та же карточка текстом.
+Картинку в ответ инлайн-режима Telegram принимает либо ссылкой (с нашего
+IP он их не забирает — проверено), либо как уже загруженную в Telegram.
+Поэтому бот загружает карточку в служебный закрытый канал (meta storage_chat,
+подключается сам, когда бота делают админом второго канала), берёт её
+file_id и сразу удаляет сообщение. file_id помним 6 часов: повторный запрос
+отвечает мгновенно. Служебного канала нет — карточка уходит текстом.
 
 Telegram шлёт запрос на каждую набранную букву, поэтому ответы по
 направлению держим в памяти и в API ходим только за новым маршрутом.
@@ -21,12 +25,11 @@ from datetime import date, timedelta
 
 import aiohttp
 from aiogram import Router
-from aiogram.types import (InlineKeyboardButton, InlineKeyboardMarkup, InlineQuery,
-                           InlineQueryResultArticle, InlineQueryResultPhoto,
-                           InlineQueryResultsButton, InputTextMessageContent,
-                           LinkPreviewOptions)
+from aiogram.types import (BufferedInputFile, InlineKeyboardButton, InlineKeyboardMarkup,
+                           InlineQuery, InlineQueryResultArticle,
+                           InlineQueryResultCachedPhoto, InlineQueryResultsButton,
+                           InputTextMessageContent, LinkPreviewOptions)
 
-import cardweb
 import channel
 import config as C
 import db
@@ -40,7 +43,9 @@ import weather
 
 router = Router()
 _cache = {}            # (откуда, куда) -> (когда, строки)
+_photos = {}           # карточка -> (когда, file_id)
 TTL = 20 * 60
+PHOTO_TTL = 6 * 3600
 SUB = "bot_inline"
 
 
@@ -60,14 +65,58 @@ async def _dates(origin, dest):
 
 
 async def _weather(items):
-    """Погода на каждую дату — параллельно и не дольше 4 секунд на всё."""
+    """Погода на каждую дату — параллельно и не дольше 3 секунд на всё."""
     async def one(d):
         if "weather" not in d:
             d["weather"] = await weather.for_trip(d["dest"], d["depart"])
     try:
-        await asyncio.wait_for(asyncio.gather(*(one(d) for d in items)), 4)
+        await asyncio.wait_for(asyncio.gather(*(one(d) for d in items)), 3)
     except Exception:
         pass                              # не успели — карточки уйдут без погоды
+
+
+def _cand(d):
+    c = post.cand(d)
+    return dict(c, kind="found") if c["kind"] == "budget" else c   # в чатах бюджета нет
+
+
+async def _upload(bot, store, d):
+    """Нарисовать карточку, загрузить в служебный канал, вернуть file_id."""
+    c = _cand(d)
+    key = (d["origin"], d["dest"], d.get("depart"), d["price"], c["kind"], c.get("pct"),
+           (d.get("weather") or {}).get("day"))
+    hit = _photos.get(key)
+    if hit and time.time() - hit[0] < PHOTO_TTL:
+        return hit[1]
+    png = await asyncio.to_thread(post.image, d, c)
+    msg = await bot.send_photo(store, BufferedInputFile(png, "card.png"),
+                               disable_notification=True)
+    fid = msg.photo[-1].file_id
+    try:
+        await bot.delete_message(store, msg.message_id)   # file_id живёт и без сообщения
+    except Exception:
+        pass
+    _photos[key] = (time.time(), fid)
+    return fid
+
+
+async def _photos_for(bot, items):
+    """file_id карточек по порядку, None — не успели или нет хранилища."""
+    store = db.meta_get("storage_chat")
+    if not store or not items:
+        return [None] * len(items)
+
+    async def one(d):
+        try:
+            return await _upload(bot, int(store), d)
+        except Exception as e:
+            print(f"  инлайн картинка {d.get('dest')}: {e}")
+            return None
+    try:
+        return await asyncio.wait_for(asyncio.gather(*(one(d) for d in items)), 6)
+    except asyncio.TimeoutError:
+        print("  инлайн: картинки не успели за 6 с — отвечаю текстом")
+        return [None] * len(items)
 
 
 def _text(d):
@@ -81,7 +130,7 @@ def _text(d):
     return "\n".join(lines)
 
 
-def _result(i, d, title_city=False):
+def _result(i, d, photo=None, title_city=False):
     """Одна карточка выдачи: картинка (или текст), подпись и кнопки."""
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text=f"🎫 Купить за {render.money(d['price'])}",
@@ -93,14 +142,9 @@ def _result(i, d, title_city=False):
     disc = d.get("discount")
     desc = channel.info(d) + (f" · −{disc}% к обычной" if disc else "")
     rid = f"{i}-{d['origin']}-{d['dest']}-{d.get('depart')}-{d['price']}"
-    if cardweb.ready():
-        c = post.cand(d)
-        if c["kind"] == "budget":          # в чатах бюджета нет — просто дёшево
-            c = dict(c, kind="found")
-        token = cardweb.put(d, c)
-        return InlineQueryResultPhoto(
-            id=rid, photo_url=cardweb.url(token), thumbnail_url=cardweb.url(token, thumb=True),
-            photo_width=1280, photo_height=720, title=f"✈️ {head}", description=desc,
+    if photo:
+        return InlineQueryResultCachedPhoto(
+            id=rid, photo_file_id=photo, title=f"✈️ {head}", description=desc,
             caption=_text(d), parse_mode="HTML", reply_markup=kb)
     return InlineQueryResultArticle(
         id=rid, title=f"✈️ {head}", description=desc,
@@ -122,7 +166,7 @@ async def on_inline(q: InlineQuery):
             today = date.today().isoformat()
             items = sorted((dict(d) for d in db.load_feed(home)
                             if d.get("discount") and (d.get("depart") or "") > today),
-                           key=lambda d: -d["discount"])[:8]
+                           key=lambda d: -d["discount"])[:6]
             title_city = True
         else:
             codes = parse._cities(text)
@@ -133,13 +177,15 @@ async def on_inline(q: InlineQuery):
         await _weather(items)
     except Exception as e:
         print(f"  инлайн «{text}»: {e}")
+    photos = await _photos_for(q.bot, items)
     results = []
-    for i, d in enumerate(items):
+    for i, (d, ph) in enumerate(zip(items, photos)):
         try:
-            results.append(_result(i, d, title_city))
+            results.append(_result(i, d, ph, title_city))
         except Exception as e:
             print(f"  инлайн карточка {d.get('dest')}: {e}")
-    print(f"  инлайн «{text}» от {q.from_user.id}: карточек {len(results)}")
+    print(f"  инлайн «{text}» от {q.from_user.id}: карточек {len(results)}, "
+          f"с картинкой {sum(1 for p in photos if p)}")
     # Telegram хранит ответ cache_time секунд и не спрашивает заново:
     # долгий кэш прятал бы свежие цены и правки карточек
     await q.answer(results, cache_time=30, is_personal=True,
