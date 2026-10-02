@@ -165,7 +165,7 @@ def _flight(img, d, hops=1, via=()):
     _plane(img, x, y, math.atan2(y2 - y1, x2 - x1), scale=2.2 if hops <= 1 else 1.8)
 
 
-def digest(title, subtitle, rows, sign=None):
+def digest(title, subtitle, rows, sign=None, footnote="цены на момент публикации"):
     """
     Картинка дайджеста: заголовок и до шести строк «−55% · маршрут · цена».
     rows — [(процент, маршрут, цена-строкой), ...]. Вместо процента можно
@@ -194,8 +194,7 @@ def digest(title, subtitle, rows, sign=None):
     sign = C.CHANNEL_SIGN if sign is None else sign
     if sign:
         d.text((W - X0, H - 40), sign, font=_font("bold", 30), fill=LILAC, anchor="rs")
-    d.text((X0, H - 40), "цены на момент публикации", font=_font("regular", 26),
-           fill=DIM, anchor="ls")
+    d.text((X0, H - 40), footnote, font=_font("regular", 26), fill=DIM, anchor="ls")
     out = io.BytesIO()
     img.save(out, format="PNG", optimize=True)
     return out.getvalue()

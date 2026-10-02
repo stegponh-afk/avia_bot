@@ -14,10 +14,13 @@ from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.enums import ParseMode
 from aiogram.exceptions import TelegramForbiddenError, TelegramRetryAfter
 
+import card
+import channel
 import config as C
 import db
 import detect
 import keyboards as kb
+import places
 import post
 import render
 import ui
@@ -110,6 +113,28 @@ async def notify(alerts, only=None):
     return sent
 
 
+def morning_post(items):
+    """
+    Утренняя сводка в стиле подборок канала: картинка со списком
+    «−45% · Москва → Сочи · 3 200 ₽» и под ней те же находки текстом.
+    """
+    n = len(items)
+    found = f"{n} {render.plural(n, 'находку', 'находки', 'находок')}"
+    origins = {d["origin"] for d in items}
+    subtitle = f"за ночь нашёл {found}" + (
+        f" · вылет из города {places.name(origins.pop())}" if len(origins) == 1 else "")
+    rows = [(d["discount"] if d.get("discount") else "бюджет", channel.route(d),
+             render.money(d["price"])) for d in items]
+    png = card.digest("Пока ты спал", subtitle, rows, footnote="цены на момент находки")
+    body = "\n".join(render.feed_item(i, d) if d.get("discount") else
+                     f"{i}. {places.name(d['dest'])} — <b>{render.money(d['price'])}</b>"
+                     f" · {render.when_wd(d['depart'])}"
+                     for i, d in enumerate(items, 1))
+    text = "\n\n".join([f"☀️ <b>Пока ты спал</b>\nза ночь нашёл {found}", body,
+                        "<i>Цены могли измениться — нажми, покажу билет по свежим ценам.</i>"])
+    return png, text
+
+
 async def morning():
     """
     Утро: ночные находки — каждому одним сообщением. Одна — сразу карточкой,
@@ -129,12 +154,9 @@ async def morning():
             if len(items) == 1:
                 await post.send(bot, chat, items[0], "bot_alert", s["style"])
             else:
-                body = "\n".join(render.feed_item(i, d) for i, d in enumerate(items, 1))
-                await ui.push(bot, chat, ui.screen(
-                    "☀️ <b>Пока ты спал</b>",
-                    f"За ночь нашёл {len(items)} {render.plural(len(items), 'скидку', 'скидки', 'скидок')}:",
-                    body, footer="Нажми — покажу билет. Цены могли измениться 👇"),
-                    kb.morning(items), s["style"] or C.STYLE)
+                png, text = morning_post(items)
+                await channel.send_post(bot, chat, png, text, kb.morning(items),
+                                        rich_ok=(s["style"] or C.STYLE) == ui.NEW)
             sent += 1
         except TelegramForbiddenError:
             db.stop_sub(chat)
@@ -153,7 +175,6 @@ async def weekend_due(force=False):
     считаем один раз на город, рассылаем всем из него. Меньше двух
     вариантов — этому городу в эту неделю не пишем.
     """
-    import channel
     now = datetime.now()
     week = now.strftime("%G-%V")
     if not force:
