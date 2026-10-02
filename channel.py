@@ -33,6 +33,7 @@ import places
 import render
 import tp
 import ui
+import weather
 
 ORIGIN_TAG = {"MOW": "изМосквы", "LED": "изПитера"}
 ICON = {"super": "🔥", "deal": "💸", "drop": "📉"}
@@ -152,6 +153,9 @@ async def enrich(d):
     except Exception as e:
         print(f"  отели {d['dest']}: {e}")
         d["stay"] = None
+    # погода там же и на те же даты — строкой в посте и на карточке
+    back = d.get("ret") or (d.get("back") or {}).get("depart")
+    d["weather"] = await weather.for_trip(d["dest"], d["depart"], back)
     return d
 
 
@@ -189,7 +193,7 @@ def usual_line(c):
 
 
 def return_lines(d):
-    """Строки про обратный билет и выходные — если enrich их нашёл."""
+    """Строки про обратный билет, выходные и погоду — если enrich их нашёл."""
     out = []
     if back_text(d):
         out.append(f"↩️ {back_text(d)}")
@@ -197,7 +201,15 @@ def return_lines(d):
     if w and (not d.get("back") or w["depart"] != d["back"]["depart"]):
         out.append(f"🏖 на выходные: обратно {render.when_wd(w['depart'])} "
                    f"за {render.money(w['price'])}")
+    if d.get("weather"):
+        out.append(weather.line(d["weather"], places.name(d["dest"])))
     return out
+
+
+def country_label(d):
+    """Строка под маршрутом на карточке: «Турция · днём +24°»."""
+    bits = [places.country(d["dest"]) or "", weather.short(d.get("weather"))]
+    return " · ".join(b for b in bits if b)
 
 
 def caption(d, c, updated=None):
@@ -225,8 +237,7 @@ def _stamp(iso):
 
 
 def image(d, c):
-    country = places.country(d["dest"]) or ""
-    return card.render(c["kind"], c["pct"], route(d), country,
+    return card.render(c["kind"], c["pct"], route(d), country_label(d),
                        render.money(d["price"]), render.money(c["usual"]), info(d),
                        transfers=d.get("transfers"),
                        via=[places.name(v) for v in (tp.via(d) or [])],
@@ -451,7 +462,7 @@ async def publisher():
     import traceback
     import notify
     while True:
-        for rubric in (digest_due, weekend_due, notify.weekend_due):
+        for rubric in (digest_due, weekend_due, notify.weekend_due, notify.recap_due):
             try:
                 await rubric()
             except Exception:

@@ -101,8 +101,23 @@ CREATE TABLE IF NOT EXISTS watches(         -- свои направления: 
   cur_price    INTEGER,   -- лучшая цена последней проверки — для списка
   cur_depart   TEXT,
   checked_at   TEXT,
-  UNIQUE(chat_id, origin, dest)
+  on_date      TEXT DEFAULT '',   -- конкретная дата вылета; '' — любая
+  target       INTEGER,           -- своя цена: «напиши, когда дешевле»; NULL — нет
+  UNIQUE(chat_id, origin, dest, on_date)
 );
+
+CREATE TABLE IF NOT EXISTS sent_log(        -- что бот прислал человеку — для итогов месяца
+  id       INTEGER PRIMARY KEY,
+  chat_id  INTEGER,
+  origin   TEXT,
+  dest     TEXT,
+  price    INTEGER,
+  usual    INTEGER,   -- обычная цена, если была скидка
+  discount INTEGER,
+  kind     TEXT,      -- alert / watch / morning
+  at       TEXT
+);
+CREATE INDEX IF NOT EXISTS ix_sent_log ON sent_log(chat_id, at);
 
 CREATE TABLE IF NOT EXISTS links(           -- ссылки-отслеживания: t.me/бот?start=slug
   id         INTEGER PRIMARY KEY,
@@ -155,12 +170,32 @@ _lock = threading.Lock()
 _db = None
 
 
+def _rebuild_watches(db):
+    """
+    Слежка до появления дат: в уникальном ключе нет даты, и колонку туда не
+    добавить ALTER'ом. Переименовываем старую таблицу, SCHEMA создаёт новую,
+    строки переносим — направления у людей остаются.
+    """
+    have = {r[1] for r in db.execute("PRAGMA table_info(watches)")}
+    if not have or "on_date" in have:
+        return
+    db.execute("ALTER TABLE watches RENAME TO watches_old")
+    db.executescript(SCHEMA)
+    db.execute("INSERT INTO watches(id,chat_id,origin,dest,created_at,last_price,last_sent_at,"
+               "cur_price,cur_depart,checked_at) SELECT id,chat_id,origin,dest,created_at,"
+               "last_price,last_sent_at,cur_price,cur_depart,checked_at FROM watches_old")
+    db.execute("DROP TABLE watches_old")
+    db.commit()
+    print("  база: слежка переведена на даты и свою цену")
+
+
 def connect():
     """Одно соединение на процесс, запись под замком: пишут и бот, и сборщик."""
     global _db
     if _db is None:
         _db = sqlite3.connect(C.DB, check_same_thread=False)
         _db.row_factory = sqlite3.Row
+        _rebuild_watches(_db)
         _db.executescript(SCHEMA)
         for table, cols in MIGRATIONS.items():
             have = {r[1] for r in _db.execute(f"PRAGMA table_info({table})")}
@@ -461,23 +496,48 @@ def origins():
 
 # ---------- свои направления ----------
 
-def add_watch(chat_id, origin, dest, price=None, depart=None):
-    """Следить за направлением. Уже следит — ничего не меняем, отдаём id."""
+def add_watch(chat_id, origin, dest, price=None, depart=None, on_date=""):
+    """
+    Следить за направлением — на любую дату (on_date='') или на одну.
+    Уже следит — ничего не меняем, отдаём id.
+    """
     db = connect()
     with _lock:
         db.execute(
             "INSERT OR IGNORE INTO watches(chat_id,origin,dest,created_at,last_price,"
-            "last_sent_at,cur_price,cur_depart,checked_at) VALUES(?,?,?,?,?,?,?,?,?)",
+            "last_sent_at,cur_price,cur_depart,checked_at,on_date) VALUES(?,?,?,?,?,?,?,?,?,?)",
             (chat_id, origin, dest, now(), price, now(), price, depart,
-             now() if price else None))
+             now() if price else None, on_date or ""))
         db.commit()
-    return get_watch(chat_id, origin, dest)["id"]
+    return get_watch(chat_id, origin, dest, on_date)["id"]
 
 
-def get_watch(chat_id, origin, dest):
+def get_watch(chat_id, origin, dest, on_date=""):
     return connect().execute(
-        "SELECT * FROM watches WHERE chat_id=? AND origin=? AND dest=?",
-        (chat_id, origin, dest)).fetchone()
+        "SELECT * FROM watches WHERE chat_id=? AND origin=? AND dest=? AND on_date=?",
+        (chat_id, origin, dest, on_date or "")).fetchone()
+
+
+def log_sent(chat_id, d, kind):
+    """Записать, что прислали человеку: из этого — итоги месяца."""
+    db = connect()
+    with _lock:
+        db.execute("INSERT INTO sent_log(chat_id,origin,dest,price,usual,discount,kind,at) "
+                   "VALUES(?,?,?,?,?,?,?,?)",
+                   (chat_id, d.get("origin"), d.get("dest"), d.get("price"), d.get("usual"),
+                    d.get("discount"), kind, now()))
+        db.commit()
+
+
+def sent_between(chat_id, since, until):
+    return connect().execute(
+        "SELECT * FROM sent_log WHERE chat_id=? AND at>=? AND at<? ORDER BY at",
+        (chat_id, since, until)).fetchall()
+
+
+def sent_chats(since, until):
+    return [r[0] for r in connect().execute(
+        "SELECT DISTINCT chat_id FROM sent_log WHERE at>=? AND at<?", (since, until))]
 
 
 def watch_by_id(watch_id):

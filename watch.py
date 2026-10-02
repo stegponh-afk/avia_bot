@@ -40,15 +40,19 @@ async def fetch(session, origin, dest):
     return rows
 
 
-def best(rows, s=None):
+def best(rows, s=None, on_date=""):
     """
     Лучший билет для этого человека: самая дешёвая дата в его окне,
     не раньше завтрашнего дня. Со скидкой к обычной цене, если она есть.
+    on_date — следит за одним рейсом: берём только эту дату, окно не важно.
     """
     tomorrow = (date.today() + timedelta(days=1)).isoformat()
     a, b = (s["date_from"], s["date_to"]) if s else (None, None)
-    mine = [r for r in rows if (r.get("depart") or "") >= tomorrow
-            and users.in_window(r["depart"], a, b)]
+    if on_date:
+        mine = [r for r in rows if r.get("depart") == on_date >= tomorrow]
+    else:
+        mine = [r for r in rows if (r.get("depart") or "") >= tomorrow
+                and users.in_window(r["depart"], a, b)]
     if not mine:
         return None
     d = dict(min(mine, key=lambda r: r["price"]))
@@ -92,6 +96,8 @@ def decide(w, d):
     немного ниже известной — тоже пишем, но не чаще раза в WATCH_REPEAT_DAYS.
     """
     price, known = d["price"], w["last_price"]
+    if w["target"]:
+        return _decide_target(w, d)
     if not known:
         # цен при подписке не было: первая же увиденная становится известной,
         # а написать стоит только если она уже со скидкой
@@ -106,6 +112,25 @@ def decide(w, d):
             d["watch_was"] = known
             return "send", d
     if price >= known * (1 + C.WATCH_DROP_PCT / 100):
+        return "raise", price
+    return None, None
+
+
+def _decide_target(w, d):
+    """
+    Своя цена: пишем, когда билет стал не дороже неё. Один раз — пока цена
+    не уйдёт выше и не вернётся; дальше — если подешевело ещё на
+    WATCH_DROP_PCT% от того, о чём писали.
+    """
+    price, known, t = d["price"], w["last_price"], w["target"]
+    if price <= t:
+        if not known or known > t or price <= known * (1 - C.WATCH_DROP_PCT / 100):
+            d["watch_target"] = t
+            if known and known > price:
+                d["watch_was"] = known
+            return "send", d
+        return None, None
+    if not known or price >= known * (1 + C.WATCH_DROP_PCT / 100):
         return "raise", price
     return None, None
 
@@ -132,12 +157,16 @@ async def check():
                 print(f"  слежка {route[0]}-{route[1]}: {e}")
     bot = notify.make_bot()
     sent = 0
+    tomorrow = (date.today() + timedelta(days=1)).isoformat()
     for w in watches:
+        if w["on_date"] and w["on_date"] < tomorrow:
+            db.del_watch(w["chat_id"], w["id"])     # рейс улетел — следить не за чем
+            continue
         got = rows.get((w["origin"], w["dest"]))
         if got is None:                       # источник не ответил — не судим
             continue
         sub = db.get_sub(w["chat_id"])
-        d = best(got, sub)
+        d = best(got, sub, w["on_date"])
         db.set_watch(w["id"], cur_price=d["price"] if d else None,
                      cur_depart=d["depart"] if d else None, checked_at=db.now())
         if not d:
@@ -152,10 +181,11 @@ async def check():
             # уведомления по направлениям выключены: цену видно в списке,
             # «известную» не двигаем — включит снова, узнает о падении
             continue
-        d["watch_id"] = w["id"]
+        d["watch_id"], d["watch_on"] = w["id"], w["on_date"]
         try:
             await post.send(bot, w["chat_id"], d, "bot_watch", sub["style"])
             db.set_watch(w["id"], last_price=d["price"], last_sent_at=db.now())
+            db.log_sent(w["chat_id"], d, "watch")
             sent += 1
         except TelegramForbiddenError:
             db.stop_sub(w["chat_id"])
@@ -169,40 +199,49 @@ async def check():
 
 # ---------- для экранов ----------
 
-async def start(chat_id, origin, dest):
+async def start(chat_id, origin, dest, on_date=""):
     """
-    Начать следить. Возвращает (id, лучшая цена сейчас или None, ошибка).
+    Начать следить — за направлением или за одной датой (on_date).
+    Возвращает (id, лучшая цена сейчас или None, ошибка).
     Лучшая цена сейчас и становится «известной»: писать будем, когда дешевле.
     """
-    if db.get_watch(chat_id, origin, dest):
-        return db.get_watch(chat_id, origin, dest)["id"], None, None
+    if db.get_watch(chat_id, origin, dest, on_date):
+        return db.get_watch(chat_id, origin, dest, on_date)["id"], None, None
     if len(db.watches_of(chat_id)) >= C.WATCH_MAX:
         return None, None, (f"Следить можно максимум за {C.WATCH_MAX} направлениями — "
                             "удали лишнее в «🔔 Мои направления».")
     d = None
     try:
         async with aiohttp.ClientSession() as s:
-            d = best(await fetch(s, origin, dest), db.get_sub(chat_id))
+            d = best(await fetch(s, origin, dest), db.get_sub(chat_id), on_date)
     except Exception as e:
         print(f"  слежка {origin}-{dest}: {e}")
     wid = db.add_watch(chat_id, origin, dest, d["price"] if d else None,
-                       d["depart"] if d else None)
+                       d["depart"] if d else None, on_date)
     return wid, d, None
 
 
 def route(w):
-    return f"{places.name(w['origin'])} → {places.name(w['dest'])}"
+    """«Киров → Москва» или «Киров → Москва, 18 окт» — у слежки за рейсом."""
+    r = f"{places.name(w['origin'])} → {places.name(w['dest'])}"
+    return r + (f", {render.when(w['on_date'])}" if w["on_date"] else "")
 
 
 def line(i, w):
-    """Строка списка: маршрут и лучшая цена последней проверки."""
+    """Строка списка: маршрут, лучшая цена последней проверки, своя цена."""
     if w["cur_price"]:
-        now_ = f"от <b>{render.money(w['cur_price'])}</b> · {render.when_wd(w['cur_depart'])}"
+        now_ = f"{'' if w['on_date'] else 'от '}<b>{render.money(w['cur_price'])}</b>"
+        if not w["on_date"]:
+            now_ += f" · {render.when_wd(w['cur_depart'])}"
     else:
         now_ = "<i>цен пока нет — проверяю</i>"
+    if w["target"]:
+        now_ += f" · 🎯 жду до {render.money(w['target'])}"
     return f"{i}. {route(w)}\n{render.INDENT}{now_}"
 
 
 RULES = (f"Напишу, когда билет подешевеет на {C.WATCH_DROP_PCT}% от цены, "
          f"которую ты уже видел, или станет на {C.WATCH_PCT}% дешевле обычного "
-         f"для этого маршрута. Проверяю каждые {C.POLL_EVERY_MIN} минут.")
+         f"для этого маршрута. Проверяю каждые {C.POLL_EVERY_MIN} минут.\n"
+         "🎯 — своя цена: напишу, когда билет станет не дороже неё. Следить можно "
+         "и за одной датой — кнопка «🔔 Следить за этой датой» под билетом.")

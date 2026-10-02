@@ -154,6 +154,8 @@ def deal_kb(d, sub="bot"):
         rows.append([_b(f"📅 Все даты · {places.name(dest)}", f"dest:{dest}:{d['origin']}")])
     if d.get("watch_id"):
         rows.append([_b("🔕 Больше не следить", f"watch:del:{d['watch_id']}")])
+    elif d.get("depart") and not d.get("legs") and dest and len(dest) == 3:
+        rows.append([_b("🔔 Следить за этой датой", f"wd:{d['origin']}:{dest}:{d['depart'][:10]}")])
     return _kb(rows)
 
 
@@ -200,9 +202,11 @@ def dest_card(code, best, origin=None, own=True, watch_id=None):
 
 def watch_list(ws):
     """Свои направления: открыть календарь или перестать следить."""
-    rows = [[_b(f"📍 {places.name(w['origin'])} → {places.name(w['dest'])}",
+    rows = [[_b(f"📍 {places.name(w['origin'])} → {places.name(w['dest'])}"
+                + (f", {render.when(w['on_date'])}" if w["on_date"] else ""),
                 f"dest:{w['dest']}:{w['origin']}"),
-             _b("🔕 Убрать", f"watch:rm:{w['id']}")] for w in ws]
+             _b("🎯", f"watch:tg:{w['id']}"),
+             _b("🔕", f"watch:rm:{w['id']}")] for w in ws]
     if len(ws) < C.WATCH_MAX:
         rows.append([_b("➕ Добавить направление", "watch:new")])
     return _kb(rows)
@@ -233,6 +237,9 @@ def trip_kb(res):
                         f"trip:{res['origin']}:{res['dest']}:"
                         f"{a['depart']}:{a.get('ret') or ''}")])
 
+    if res.get("depart"):
+        rows.append([_b(f"🔔 Следить за ценой на {render.when(res['depart'])}",
+                        f"wd:{res['origin']}:{res['dest']}:{res['depart']}")])
     rows.append([_b("🔀 Поискать дешевле с пересадкой", f"combo:{res['dest']}")])
     return _kb(rows)
 
@@ -307,6 +314,7 @@ def admin(style):
                 [_b("📌 Закреп с навигацией", "admin:nav"),
                  _b("🏆 Дайджест сейчас", "admin:digest")],
                 [_b("🏖 «Куда на выходные» сейчас", "admin:weekend")],
+                [_b("📊 Мои итоги месяца", "admin:recap")],
                 [_b(f"🎨 Оформление: {'новое' if style == 'new' else 'старое'}",
                     "admin:style")]])
 

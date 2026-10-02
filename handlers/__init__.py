@@ -15,10 +15,11 @@
 Порядок подключения важен: меню раньше состояний ввода (нажатая кнопка
 главнее недописанного ответа), свободный текст — последним.
 """
-from . import admin, channel, fallback, feed, links, menu, search, settings, start, watch
+from . import (admin, channel, fallback, feed, inline, links, menu, search, settings,
+               start, watch)
 
 
 def setup(dp):
     for module in (start, menu, feed, search, watch, settings, admin, links, channel,
-                   fallback):
+                   inline, fallback):
         dp.include_router(module.router)

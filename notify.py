@@ -6,7 +6,7 @@
 на человека за проход — лучше три отличные находки, чем десять средних.
 """
 import asyncio
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 from aiogram import Bot
 from aiogram.client.default import DefaultBotProperties
@@ -101,6 +101,7 @@ async def notify(alerts, only=None):
         for d in mine[:C.USER_ALERTS_PER_RUN]:
             try:
                 await post.send(bot, s["chat_id"], d, "bot_alert", s["style"], cache)
+                db.log_sent(s["chat_id"], d, "alert")
                 sent += 1
             except TelegramRetryAfter as e:
                 await asyncio.sleep(e.retry_after)
@@ -157,6 +158,8 @@ async def morning():
                 png, text = morning_post(items)
                 await channel.send_post(bot, chat, png, text, kb.morning(items),
                                         rich_ok=(s["style"] or C.STYLE) == ui.NEW)
+            for d in items:
+                db.log_sent(chat, d, "morning")
             sent += 1
         except TelegramForbiddenError:
             db.stop_sub(chat)
@@ -206,4 +209,100 @@ async def weekend_due(force=False):
             print(f"  выходные в бот {s['chat_id']}: {e}")
         await asyncio.sleep(0.05)
     print(f"  выходные в бот: городов {len(posts)}, сообщений {sent}")
+    return sent
+
+
+MONTHS_GEN = ("января", "февраля", "марта", "апреля", "мая", "июня", "июля", "августа",
+              "сентября", "октября", "ноября", "декабря")
+
+
+def recap_post(chat_id, since, until, title):
+    """
+    Итоги месяца человека: (картинка, текст) или None, если меньше трёх находок.
+    Считаем по журналу sent_log — ровно то, что бот прислал.
+    """
+    rows = db.sent_between(chat_id, since, until)
+    if len(rows) < 3:
+        return None
+    best = {}
+    for r in rows:                       # одно направление — одна строка, лучшая скидка
+        k = (r["origin"], r["dest"])
+        if r["discount"] and (k not in best or r["discount"] > best[k]["discount"]):
+            best[k] = r
+    top = sorted(best.values(), key=lambda r: -r["discount"])[:5]
+    saved = sum(r["usual"] - r["price"] for r in best.values()
+                if r["usual"] and r["usual"] > r["price"])
+    watch_n = sum(1 for r in rows if r["kind"] == "watch")
+    n = len(rows)
+    found = f"{n} {render.plural(n, 'находку', 'находки', 'находок')}"
+    lines = [f"За месяц прислал тебе <b>{found}</b>"]
+    if top:
+        t = top[0]
+        lines.append(f"🔥 самая большая скидка — <b>−{t['discount']}%</b>: "
+                     f"{places.name(t['origin'])} → {places.name(t['dest'])} "
+                     f"за {render.money(t['price'])}")
+    if watch_n:
+        lines.append(f"🔔 по твоим направлениям: {watch_n}")
+    if saved:
+        lines.append(f"💰 всё вместе — на {render.money(saved)} дешевле обычных цен")
+    parts = [f"📊 <b>{title}</b>", "\n".join(lines)]
+    if top:
+        parts.append("<b>Самые выгодные:</b>\n" + "\n".join(
+            f"{i}. −{r['discount']}% {places.name(r['origin'])} → {places.name(r['dest'])}"
+            f" — {render.money(r['price'])}" for i, r in enumerate(top, 1)))
+    parts.append("<i>Хочешь больше или меньше сообщений — ⚙️ Настройки → 🔔 Что присылать.</i>")
+    subtitle = f"{found}" + (f" · самая большая скидка −{top[0]['discount']}%" if top else "")
+    png = card.digest(title, subtitle,
+                      [(r["discount"], f"{places.name(r['origin'])} → {places.name(r['dest'])}",
+                        render.money(r["price"])) for r in top],
+                      footnote="цены на момент находки")
+    return png, "\n\n".join(parts)
+
+
+async def recap_due(force=False, only=None):
+    """
+    Итоги месяца — первого числа после 12:00, за прошлый месяц, тем, кому
+    за месяц пришло хотя бы три находки. force + only — посмотреть свои
+    итоги прямо сейчас (из админки): тогда за текущий месяц на сегодня.
+    """
+    now = datetime.now()
+    if force:
+        first = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        since, until, month = first, now + timedelta(minutes=1), now.month
+    else:
+        if now.day != 1 or now.hour < 12:
+            return 0
+        until = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        since = (until - timedelta(days=1)).replace(day=1)
+        month = since.month
+        if db.meta_get("recap_month") == since.strftime("%Y-%m"):
+            return 0
+        db.meta_set("recap_month", since.strftime("%Y-%m"))
+    a, b = since.isoformat(timespec="seconds"), until.isoformat(timespec="seconds")
+    chats = [only] if only else db.sent_chats(a, b)
+    bot, sent = make_bot(), 0
+    title = f"Итоги {MONTHS_GEN[month - 1]}"
+    for chat in chats:
+        s = db.get_sub(chat)
+        if not s or not s["active"]:
+            continue
+        got = recap_post(chat, a, b, title)
+        if not got:
+            if only:
+                await bot.send_message(chat, "📊 За этот месяц пока меньше трёх находок — "
+                                             "итогам не из чего собраться.")
+            continue
+        png, text = got
+        markup = kb._kb([[kb._b("🔔 Что присылать", "set:mode")]])
+        try:
+            await channel.send_post(bot, chat, png, text, markup,
+                                    rich_ok=(s["style"] or C.STYLE) == ui.NEW)
+            sent += 1
+        except TelegramForbiddenError:
+            db.stop_sub(chat)
+        except Exception as e:
+            print(f"  итоги месяца {chat}: {e}")
+        await asyncio.sleep(0.05)
+    if sent:
+        print(f"  итоги месяца: {sent}")
     return sent

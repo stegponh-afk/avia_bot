@@ -24,10 +24,11 @@ BG_TOP, BG_BOTTOM = (15, 23, 42), (30, 27, 75)
 WHITE, SOFT, MUTED, DIM = (255, 255, 255), (226, 232, 240), (148, 163, 184), (100, 116, 139)
 GREEN, VIOLET, LILAC = (74, 222, 128), (99, 102, 241), (165, 180, 252)
 ACCENT = {"super": (239, 68, 68), "deal": (249, 115, 22), "drop": (14, 165, 233),
-          "combo": (168, 85, 247), "budget": (22, 163, 74), "cheaper": (14, 165, 233)}
+          "combo": (168, 85, 247), "budget": (22, 163, 74), "cheaper": (14, 165, 233),
+          "target": (22, 163, 74)}
 LABEL = {"super": "СУПЕРСКИДКА", "deal": "СКИДКА", "drop": "ПОДЕШЕВЕЛО ЗА СУТКИ",
          "combo": "ДВУМЯ БИЛЕТАМИ", "budget": "В ТВОЁМ БЮДЖЕТЕ",
-         "cheaper": "ПОДЕШЕВЕЛО"}
+         "cheaper": "ПОДЕШЕВЕЛО", "target": "ТВОЯ ЦЕНА"}
 
 FONTS = {
     "regular": ["/usr/share/fonts/opentype/inter/Inter-Regular.otf",

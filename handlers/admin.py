@@ -144,6 +144,15 @@ async def cb_weekend(q: CallbackQuery):
                            "подборку не из чего собрать.")
 
 
+@router.callback_query(F.data == "admin:recap")
+async def cb_recap(q: CallbackQuery):
+    """Свои итоги месяца — за текущий месяц на сегодня, всем приходят 1-го числа."""
+    if not is_owner(q.from_user.id):
+        return
+    await q.answer("Собираю")
+    await notify.recap_due(force=True, only=q.message.chat.id)
+
+
 @router.callback_query(F.data == "admin:style")
 async def cb_style(q: CallbackQuery):
     chat = q.message.chat.id

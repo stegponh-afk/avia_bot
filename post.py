@@ -24,7 +24,7 @@ import tp
 import ui
 
 FOOTNOTE = "цена на момент проверки"
-ICON = {"cheaper": "📉"}
+ICON = {"cheaper": "📉", "target": "🎯"}
 FLASH = "⚡️ Цена редкая: такие билеты раскупают за часы — проверь, пока есть."
 
 
@@ -42,6 +42,10 @@ def cand(d):
     """
     pct, usual, basis = d.get("discount"), d.get("usual"), d.get("basis")
     was = d.get("watch_was")               # своё направление: дешевле, чем в прошлый раз
+    if d.get("watch_target"):              # своя цена: «напиши, когда дешевле N»
+        ok = was and was > d["price"]
+        return {"kind": "target", "pct": round((1 - d["price"] / was) * 100) if ok else None,
+                "usual": was if ok else None, "basis": "target"}
     if was and was > d["price"] and (pct or 0) < C.WATCH_PCT:
         return {"kind": "cheaper", "pct": round((1 - d["price"] / was) * 100),
                 "usual": was, "basis": "watch"}
@@ -61,14 +65,15 @@ async def prepare(d):
     if d.get("legs") or d.get("ret") or "back" in d:
         return
     try:
-        await asyncio.wait_for(channel.enrich(d), 15)
+        await asyncio.wait_for(channel.enrich(d), 25)
     except Exception as e:
         print(f"  обратный билет {d['origin']}-{d['dest']}: {type(e).__name__}")
-        d["back"] = d["weekend"] = None
+        for k in ("back", "weekend", "stay", "weather"):   # что успело — оставляем
+            d.setdefault(k, None)
 
 
 def image(d, c):
-    country = places.country(d["dest"]) or ""
+    country = channel.country_label(d)
     usual = render.money(c["usual"]) if c["usual"] else None
     if d.get("legs"):
         first = d["legs"][0]
@@ -94,7 +99,10 @@ def caption(d, c):
     money = render.money
     icon = ICON.get(c["kind"]) or channel.ICON.get(c["kind"], "✈️")
     lines = [f"{icon} <b>{channel.route(d)} — {money(d['price'])}</b>"]
-    if c["basis"] == "watch":
+    if c["basis"] == "target":
+        lines.append(f"🎯 дешевле твоей цены {money(d['watch_target'])}"
+                     + (f", в прошлый раз {money(c['usual'])}" if c["usual"] else ""))
+    elif c["basis"] == "watch":
         lines.append(f"в прошлый раз {money(c['usual'])}, подешевело на {c['pct']}%")
     else:
         lines.append(channel.usual_line(c) if c["pct"] else "в твоём бюджете")
@@ -104,9 +112,10 @@ def caption(d, c):
         lines += ["", FLASH]
     if d.get("watch_id"):
         was = d.get("watch_was")
-        lines += ["", "🔔 <i>ты следишь за этим направлением"
-                  + (f" · в прошлый раз {money(was)}" if was and c["basis"] != "watch"
-                     else "") + "</i>"]
+        what = "этим рейсом" if d.get("watch_on") else "этим направлением"
+        said = c["basis"] in ("watch", "target")          # «в прошлый раз» уже есть выше
+        lines += ["", f"🔔 <i>ты следишь за {what}"
+                  + (f" · в прошлый раз {money(was)}" if was and not said else "") + "</i>"]
     return "\n".join(lines)
 
 
