@@ -249,8 +249,7 @@ def channel_kb(d, post_id=None):
     sub = f"ch_{post_id}" if post_id else "ch"
     rows = []
     if d.get("link"):
-        rows.append([InlineKeyboardButton(text=f"🎫 Купить за {render.money(d['price'])}",
-                                          url=tp.buy_link(d, sub))])
+        rows.append([InlineKeyboardButton(text=t, url=u) for t, u in tp.buy_buttons(d, sub)])
     b = d.get("back")
     if b:
         back = {"origin": d["dest"], "dest": d["origin"], "depart": b["depart"],

@@ -248,6 +248,29 @@ def buy_link(d, sub=None):
     return tagged(search_link(d["origin"], d["dest"], d["depart"], d.get("ret")), sub)
 
 
+def ticket_link(d, sub=None):
+    """
+    Ссылка на сам билет — тот тариф, что был в выдаче (t=… в адресе).
+    Нет такой ссылки (находка без неё) — None: тогда остаётся только поиск.
+    """
+    link = d.get("link") or ""
+    return tagged(link, sub) if "t=" in link else None
+
+
+def buy_buttons(d, sub):
+    """
+    Кнопки покупки в один ряд: [(подпись, адрес), …].
+    «Этот билет» — точный тариф, «Все рейсы в эту дату» — поиск на день:
+    тариф могли раскупить, а поиск всегда живой. Метка у билета — sub_t.
+    """
+    money = f"{d['price']:,}".replace(",", " ") + " ₽"
+    ticket = ticket_link(d, f"{sub}_t")
+    search = buy_link(d, sub)
+    if ticket and search and ticket != search:
+        return [(f"🎫 Билет · {money}", ticket), ("🔎 Все рейсы на дату", search)]
+    return [(f"🎫 Купить за {money}", search or ticket)]
+
+
 def _link(raw, origin, dest, depart, ret):
     """API отдаёт путь вида /search/...?t=... — достраиваем до полного адреса."""
     if raw:

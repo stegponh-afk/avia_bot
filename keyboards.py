@@ -137,10 +137,10 @@ def deal_kb(d, sub="bot"):
             rows.append([_b("✈️ Сравнить с одним билетом", tp.buy_link(direct, sub))])
         return _kb(rows)
     if d.get("link"):
-        label = ("📣 Открыть пост" if d.get("src") == "tg"
-                 else f"🎫 Купить за {render.money(d['price'])}")
-        # пост из канала-источника — это ссылка на пост, а не на билет
-        rows.append([_b(label, d["link"] if d.get("src") == "tg" else tp.buy_link(d, sub))])
+        if d.get("src") == "tg":       # пост из канала-источника — ссылка на пост, а не на билет
+            rows.append([_b("📣 Открыть пост", d["link"])])
+        else:
+            rows.append([_b(t, u) for t, u in tp.buy_buttons(d, sub)])
     b = d.get("back")              # обратный билет — если карточка его нашла
     if b:
         back = {"origin": d["dest"], "dest": d["origin"], "depart": b["depart"],
