@@ -228,16 +228,30 @@ def route(w):
 
 
 def line(i, w):
-    """Строка списка: маршрут, лучшая цена последней проверки, своя цена."""
+    """
+    Строка списка: маршрут, лучшая цена последней проверки и когда проверяли,
+    и от какой цены бот напишет — чтобы его молчание было понятно.
+    """
     if w["cur_price"]:
         now_ = f"{'' if w['on_date'] else 'от '}<b>{render.money(w['cur_price'])}</b>"
         if not w["on_date"]:
             now_ += f" · {render.when_wd(w['cur_depart'])}"
     else:
         now_ = "<i>цен пока нет — проверяю</i>"
+    if w["checked_at"]:
+        t = datetime.fromisoformat(w["checked_at"])
+        when = (f"в {t:%H:%M}" if t.date() == date.today()
+                else f"{render.when(t.date().isoformat())}, {t:%H:%M}")
+        now_ += f" · <i>проверено {when}</i>"
     if w["target"]:
-        now_ += f" · 🎯 жду до {render.money(w['target'])}"
-    return f"{i}. {route(w)}\n{render.INDENT}{now_}"
+        wait = f"🎯 напишу, если будет {render.money(w['target'])} или дешевле"
+    elif w["last_price"]:
+        wait = (f"🔔 напишу, если будет {render.money(int(w['last_price'] * (1 - C.WATCH_DROP_PCT / 100)))}"
+                f" или дешевле, или появится скидка от {C.WATCH_PCT}%")
+    else:
+        wait = None
+    out = f"{i}. {route(w)}\n{render.INDENT}{now_}"
+    return out + (f"\n{render.INDENT}{wait}" if wait else "")
 
 
 RULES = (f"Напишу, когда билет подешевеет на {C.WATCH_DROP_PCT}% от цены, "
