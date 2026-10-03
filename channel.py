@@ -461,7 +461,8 @@ async def publisher():
     import traceback
     import notify
     while True:
-        for rubric in (digest_due, weekend_due, notify.weekend_due, notify.recap_due):
+        for rubric in (digest_due, weekend_due, notify.weekend_due, notify.recap_due,
+                       fresh_track_due):
             try:
                 await rubric()
             except Exception:
@@ -785,7 +786,35 @@ async def publish(bot, post_id):
 
 # ---------- сопровождение опубликованного ----------
 
-async def track():
+_track_lock = None
+
+
+def _lock():
+    global _track_lock
+    if _track_lock is None:
+        _track_lock = asyncio.Lock()
+    return _track_lock
+
+
+async def fresh_track_due():
+    """
+    Свежие посты сверяем часто: первые CHANNEL_FRESH_HOURS после публикации —
+    раз в CHANNEL_FRESH_EVERY минут, а не раз за круг опроса. Самые большие
+    скидки исчезают как раз в первые часы, и пост с ушедшей ценой не должен
+    висеть почти час.
+    """
+    if not db.channel_id():
+        return 0
+    last = db.meta_get("fresh_track_at")
+    if last and (datetime.now() - datetime.fromisoformat(last)).total_seconds()             < C.CHANNEL_FRESH_EVERY * 60:
+        return 0
+    db.meta_set("fresh_track_at", db.now())
+    if not db.active_posts(C.CHANNEL_FRESH_HOURS / 24):
+        return 0
+    return await track(days=C.CHANNEL_FRESH_HOURS / 24)
+
+
+async def track(days=None):
     """
     Сверить цены опубликованных постов и поправить их в канале.
 
@@ -797,11 +826,16 @@ async def track():
     cid = db.channel_id()
     if not cid:
         return 0
+    async with _lock():                 # частая и обычная сверка не правят пост разом
+        return await _track(cid, days or C.CHANNEL_TRACK_DAYS)
+
+
+async def _track(cid, days):
     from notify import make_bot
     bot = make_bot()
     today = date.today().isoformat()
     changed = 0
-    for p in db.active_posts(C.CHANNEL_TRACK_DAYS):
+    for p in db.active_posts(days):
         data = json.loads(p["payload"])
         d, c = data["deal"], data["cand"]
         if d["depart"] < today:
