@@ -262,6 +262,15 @@ async def watch_due():
         traceback.print_exc()
 
 
+async def watch_daily_due():
+    """Ежедневная сводка по своим направлениям — после свежей проверки цен."""
+    import watch
+    try:
+        await watch.daily_due()
+    except Exception:
+        traceback.print_exc()
+
+
 async def backup_due():
     """Бэкап базы раз в BACKUP_EVERY_H часов, в отдельном потоке."""
     import backup
@@ -303,6 +312,7 @@ async def loop(on_alerts, on_found=None):
                 await on_alerts(alerts)
             await watch_due()
             await notify.morning()
+            await watch_daily_due()
             db.prune()
             if fails >= 2:
                 await notify.resolved("poll", "Сборщик цен снова работает.")

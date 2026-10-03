@@ -164,6 +164,9 @@ MIGRATIONS = {
     "posts": {
         "fmt": "TEXT",           # rich = новый вид, NULL/photo = картинка с подписью
     },
+    "watches": {
+        "day_price": "INTEGER",  # цена из прошлой ежедневной сводки — от неё «за сутки»
+    },
 }
 
 _lock = threading.Lock()

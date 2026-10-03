@@ -227,7 +227,7 @@ def route(w):
     return r + (f", {render.when(w['on_date'])}" if w["on_date"] else "")
 
 
-def line(i, w):
+def line(i, w, daily=False):
     """
     Строка списка: маршрут, лучшая цена последней проверки и когда проверяли,
     и от какой цены бот напишет — чтобы его молчание было понятно.
@@ -250,8 +250,57 @@ def line(i, w):
                 f" или дешевле, или появится скидка от {C.WATCH_PCT}%")
     else:
         wait = None
+    if daily and w["cur_price"] and w["day_price"]:
+        diff = w["cur_price"] - w["day_price"]
+        now_ += (f" · ▼ {render.money(-diff)} за сутки" if diff < 0 else
+                 f" · ▲ {render.money(diff)} за сутки" if diff > 0 else " · без изменений")
     out = f"{i}. {route(w)}\n{render.INDENT}{now_}"
     return out + (f"\n{render.INDENT}{wait}" if wait else "")
+
+
+async def daily_due(force=False, only=None):
+    """
+    Ежедневная сводка по своим направлениям — с WATCH_DAILY_HOUR, раз в день,
+    тем, у кого стоит галочка «📋 Сводка по направлениям». Цены — из последней
+    проверки (она идёт в том же проходе опроса), «за сутки» — к прошлой сводке.
+    force + only — прислать прямо сейчас одному человеку.
+    """
+    import keyboards as kb
+    import notify
+    import ui
+    from aiogram.exceptions import TelegramForbiddenError
+    now = datetime.now()
+    today = now.date().isoformat()
+    if not force:
+        if now.hour < C.WATCH_DAILY_HOUR or db.meta_get("watch_daily_day") == today:
+            return 0
+        db.meta_set("watch_daily_day", today)
+    by_chat = {}
+    for w in db.all_watches():
+        if only is None or w["chat_id"] == only:
+            by_chat.setdefault(w["chat_id"], []).append(w)
+    bot, sent = notify.make_bot(), 0
+    for chat, ws in by_chat.items():
+        sub = db.get_sub(chat)
+        if not sub or "daily" not in users.alerts_of(sub):
+            continue
+        body = "\n\n".join(line(i, w, daily=True) for i, w in enumerate(ws, 1))
+        text = ui.screen("📋 <b>Твои направления сегодня</b>", body,
+                         footer="Сводка приходит раз в день. Выключить — ⚙️ Настройки → "
+                                "🔔 Что присылать.")
+        try:
+            await ui.push(bot, chat, text, kb.watch_list(ws), sub["style"] or C.STYLE)
+            for w in ws:
+                if w["cur_price"]:
+                    db.set_watch(w["id"], day_price=w["cur_price"])
+            sent += 1
+        except TelegramForbiddenError:
+            db.stop_sub(chat)
+        except Exception as e:
+            print(f"  сводка по направлениям {chat}: {e}")
+    if sent:
+        print(f"  сводки по направлениям: {sent}")
+    return sent
 
 
 RULES = (f"Напишу, когда билет подешевеет на {C.WATCH_DROP_PCT}% от цены, "
