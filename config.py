@@ -324,6 +324,10 @@ BACKUP_EVERY_H = _i("AVIA_BACKUP_EVERY", 24)   # как часто копиро�
 BACKUP_KEEP    = _i("AVIA_BACKUP_KEEP", 3)     # сколько копий хранить
 # Сигналы владельцу о поломках: одна и та же проблема — не чаще раза в N часов.
 PROBLEM_REPEAT_H = _i("AVIA_PROBLEM_REPEAT", 3)
+# Здоровье сервера: ниже порогов — пишем владельцу
+DISK_MIN_FREE_PCT = _i("AVIA_DISK_MIN_FREE", 20)   # свободно на диске, %
+DB_MAX_MB         = _i("AVIA_DB_MAX_MB", 1024)     # размер базы, МБ
+MEM_MIN_FREE_MB   = _i("AVIA_MEM_MIN_FREE", 150)   # доступно памяти, МБ
 
 # ---------- 14. Где лежат данные ----------
 # В Docker это /data (том), на своей машине — рядом с кодом.

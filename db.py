@@ -373,6 +373,39 @@ def save_daily(deals):
     return len(rows)
 
 
+def compact(keep_days=3):
+    """
+    Сжать историю цен старше keep_days дней: вместо цены на каждый день
+    наблюдения — минимум на каждую дату вылета за месяц наблюдения,
+    отдельно для прямых и с пересадками, в одну сторону и туда-обратно.
+
+    Обход пишет по 200–300 тысяч строк в день, а статистике нужен только
+    минимум по дате вылета (history) и разные дни наблюдений (history_days):
+    без сжатия база за 100 дней дорастала бы до ~7 ГБ при 87 тысячах
+    уникальных «направление + дата». Свежую неделю не трогаем: по ней
+    считается «упало за сутки» и лента.
+    Возвращает (было строк, стало строк) в сжимаемой части.
+    """
+    cutoff = _ago(days=keep_days)
+    db = connect()
+    with _lock:
+        before = db.execute("SELECT COUNT(*) FROM prices WHERE found_at<?", (cutoff,)).fetchone()[0]
+        db.execute("DROP TABLE IF EXISTS temp.agg")
+        db.execute(
+            "CREATE TEMP TABLE agg AS SELECT origin, dest, depart, MIN(ret) AS ret, "
+            "MIN(price) AS price, CASE WHEN transfers=0 THEN 0 ELSE MIN(transfers) END AS transfers, "
+            "MAX(found_at) AS found_at FROM prices WHERE found_at<? "
+            "GROUP BY origin, dest, depart, transfers=0, ret IS NULL, substr(found_at,1,7)",
+            (cutoff,))
+        db.execute("DELETE FROM prices WHERE found_at<?", (cutoff,))
+        db.execute("INSERT INTO prices(origin,dest,depart,ret,price,transfers,src,found_at) "
+                   "SELECT origin,dest,depart,ret,price,transfers,'agg',found_at FROM temp.agg")
+        after = db.execute("SELECT COUNT(*) FROM temp.agg").fetchone()[0]
+        db.execute("DROP TABLE temp.agg")
+        db.commit()
+    return before, after
+
+
 def prune(days=100):
     """
     Чистит историю глубже days дней, чтобы база не пухла.

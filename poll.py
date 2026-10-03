@@ -271,6 +271,58 @@ async def watch_daily_due():
         traceback.print_exc()
 
 
+async def compact_due():
+    """Раз в сутки сжать старую историю цен (db.compact) — в потоке."""
+    import notify
+    today = datetime.now().date().isoformat()
+    if db.meta_get("compact_day") == today:
+        return
+    try:
+        t0 = datetime.now()
+        before, after = await asyncio.to_thread(db.compact)
+        db.meta_set("compact_day", today)
+        print(f"  сжатие истории: {before} строк -> {after} "
+              f"за {(datetime.now() - t0).total_seconds():.0f} с")
+        await notify.resolved("compact", "Сжатие истории цен снова работает.")
+    except Exception as e:
+        await notify.problem("compact", f"Не сжалась история цен: {type(e).__name__}: {e}")
+
+
+async def server_check():
+    """
+    Здоровье сервера, а не только бота: место на диске, размер базы,
+    свободная память. Порог перешли — пишем владельцу (не чаще, чем
+    PROBLEM_REPEAT_H), вернулось в норму — говорим один раз.
+    """
+    import os
+    import shutil
+    import notify
+    disk = shutil.disk_usage(os.path.dirname(os.path.abspath(C.DB)) or ".")
+    free_pct = disk.free / disk.total * 100
+    if free_pct < C.DISK_MIN_FREE_PCT:
+        await notify.problem("disk", f"На диске сервера осталось {free_pct:.0f}% "
+                                     f"({disk.free / 2**30:.1f} ГБ). Когда кончится — встанет всё.")
+    else:
+        await notify.resolved("disk", f"Место на диске снова есть: свободно {free_pct:.0f}%.")
+    size_mb = os.path.getsize(C.DB) / 2**20 if os.path.exists(C.DB) else 0
+    if size_mb > C.DB_MAX_MB:
+        await notify.problem("dbsize", f"База выросла до {size_mb:.0f} МБ — больше "
+                                       f"{C.DB_MAX_MB} МБ. Проверь сжатие истории.")
+    else:
+        await notify.resolved("dbsize", f"База снова в норме: {size_mb:.0f} МБ.")
+    try:
+        with open("/proc/meminfo") as f:
+            info = {line.split(":")[0]: int(line.split()[1]) for line in f}
+        avail = info["MemAvailable"] / 1024
+        if avail < C.MEM_MIN_FREE_MB:
+            await notify.problem("memory", f"На сервере свободно всего {avail:.0f} МБ памяти — "
+                                           "процессы могут начать падать.")
+        else:
+            await notify.resolved("memory", f"Память снова в норме: свободно {avail:.0f} МБ.")
+    except (OSError, KeyError, ValueError):
+        pass                              # не Linux — память не смотрим
+
+
 async def backup_due():
     """Бэкап базы раз в BACKUP_EVERY_H часов, в отдельном потоке."""
     import backup
@@ -313,7 +365,7 @@ async def loop(on_alerts, on_found=None):
             await watch_due()
             await notify.morning()
             await watch_daily_due()
-            db.prune()
+            await asyncio.to_thread(db.prune)      # в потоке: бот не замирает
             if fails >= 2:
                 await notify.resolved("poll", "Сборщик цен снова работает.")
             fails = 0
@@ -323,8 +375,10 @@ async def loop(on_alerts, on_found=None):
             if fails >= 2:
                 await notify.problem("poll", f"Сборщик цен падает {fails} раза подряд: "
                                              f"{type(e).__name__}: {str(e)[:200]}")
+        await compact_due()
         await backup_due()
         await partner_due()
+        await server_check()
         await asyncio.sleep(C.POLL_EVERY_MIN * 60)
 
 
