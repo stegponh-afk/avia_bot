@@ -5,8 +5,8 @@
   • живой аккаунт-админ (tgstats) — подписчики, просмотры, пересылки,
     реакции, источники подписчиков, уведомления;
   • Travelpayouts (tpstats) — клики по кнопкам постов и покупки по меткам;
-  • сам бот — вступления и выходы по пригласительным ссылкам (закупки
-    рекламы) и переходы из канала в бота.
+  • сам бот — вступления и выходы по пригласительным ссылкам и переходы
+    в бота по ссылкам (links.py) — с ценой рекламы, если она указана.
 
 owner_report — для владельца: что происходит и что заходит.
 mediakit     — для рекламодателей: цифры, которые спрашивают при закупке.
@@ -20,6 +20,7 @@ import card
 import channel
 import config as C
 import db
+import links
 import places
 import render
 import tgstats
@@ -60,7 +61,7 @@ async def gather(days):
     s = since.isoformat(timespec="seconds")
     data["flow"] = db.member_flow(s)
     data["bot"] = db.link_stats("channel", s)
-    data["ads"] = [(a, db.ad_stats(a["link"])) for a in db.ads()]
+    data["links"] = [(l, links.counts(l, s)) for l in db.links()]
     return data
 
 
@@ -175,11 +176,13 @@ def owner_report(data):
         lines.append("🧭 Откуда подписчики: " + " · ".join(
             f"{k} {int(v)}" for k, v in sorted(st["sources"].items(), key=lambda x: -x[1]) if v))
 
-    if data["ads"]:
-        lines += ["", "📣 <b>Закупки рекламы</b>"]
-        for a, (j, s) in data["ads"][:5]:
-            price = f" · {render.money(a['cost'] / s)} за подписчика" if a["cost"] and s else ""
-            lines.append(f"• {html.escape(a['name'])}: вступило {j}, осталось {s}{price}")
+    used = [(l, c) for l, c in data["links"] if c[0]]
+    if used:
+        lines += ["", "🔗 <b>Ссылки</b> — пришли / остались за период"]
+        for l, (came, new, stayed) in sorted(used, key=lambda x: -x[1][0])[:6]:
+            price = f" · {render.money(l['cost'] / stayed)} за оставшегося" if l["cost"] and stayed else ""
+            lines.append(f"• {links.TARGET.get(l['target'] or 'bot')} {html.escape(l['name'])}: "
+                         f"{came} / {stayed}{price}")
 
     best = sorted(_by_post(tg).values(), key=lambda x: -x[0]["views"])[:5]
     if best:
@@ -243,21 +246,3 @@ def mediakit(data):
                          [(f"{channel.route(d)} −{c.get('pct')}%", f"{_n(t['views'])}")
                           for t, d, c, p in best], footnote="лучшие посты — просмотры")
     return png, "\n".join(lines)
-
-
-def ads_screen():
-    """Текст списка закупок: по каждой — вступило, осталось, цена подписчика."""
-    rows = db.ads()
-    if not rows:
-        return ("📣 <b>Закупки рекламы</b>\n\nПока ни одной. Создай закупку — бот сделает "
-                "отдельную пригласительную ссылку, отдай её рекламщику, и здесь будет видно, "
-                "сколько людей пришло и сколько осталось.")
-    out = ["📣 <b>Закупки рекламы</b>", ""]
-    for a in rows:
-        j, s = db.ad_stats(a["link"])
-        price = (f" · {render.money(a['cost'] / s)} за подписчика" if a["cost"] and s else
-                 f" · {render.money(a['cost'])}" if a["cost"] else " · бартер")
-        out.append(f"<b>{html.escape(a['name'])}</b> — вступило {j}, осталось {s}{price}\n"
-                   f"<code>{a['link']}</code>")
-    return "\n".join(out)
-

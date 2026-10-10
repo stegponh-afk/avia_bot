@@ -309,9 +309,8 @@ def admin(style):
     return _kb([[_b("🔎 Опросить сейчас", "admin:poll"),
                  _b("🔀 Искать связки", "admin:combo")],
                 [_b("📊 Статистика канала", "an:stats:7"), _b("🧾 Медиакит", "an:kit")],
-                [_b("📣 Закупки рекламы", "an:ads"), _b("🔐 Аккаунт статистики", "an:acc")],
-                [_b("➕ Создать ссылку отслеживания", "links:new")],
-                [_b("🔗 Ссылки", "links:list")],
+                [_b("🔗 Ссылки и закупки", "links:list"), _b("🔐 Аккаунт статистики", "an:acc")],
+                [_b("➕ Новая ссылка", "links:new")],
                 [_b("📣 Пример черновика для канала", "admin:example")],
                 [_b("📌 Закреп с навигацией", "admin:nav"),
                  _b("🏆 Дайджест сейчас", "admin:digest")],
@@ -326,7 +325,7 @@ def admin(style):
 def links_list(items):
     """items — [(id, подпись)]: по кнопке на ссылку и «создать»."""
     rows = [[_b(label, f"links:show:{i}")] for i, label in items]
-    rows.append([_b("➕ Создать ссылку отслеживания", "links:new")])
+    rows.append([_b("➕ Новая ссылка", "links:new")])
     return _kb(rows)
 
 

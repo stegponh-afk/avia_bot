@@ -16,8 +16,7 @@ class Ask(StatesGroup):
     watch = State()       # откуда и куда — своё направление для слежки
     link_name = State()   # название новой ссылки-отслеживания (админка)
     watch_price = State() # своя цена для направления: «напиши, когда дешевле N»
-    ad_name = State()     # закупка рекламы: название…
-    ad_cost = State()     # …и сколько заплатил
+    link_cost = State()   # сколько заплатили за рекламу с этой ссылкой
     st_api_id = State()   # вход аккаунта статистики: api_id → api_hash → телефон → код → пароль
     st_api_hash = State()
     st_phone = State()

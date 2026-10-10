@@ -1,6 +1,6 @@
 """
-Аналитика в админке: 📊 статистика канала, 🧾 медиакит, 📣 закупки рекламы
-и 🔐 подключение аккаунта статистики. Всё — только владельцам.
+Аналитика в админке: 📊 статистика канала, 🧾 медиакит и 🔐 подключение
+аккаунта статистики (ссылки и закупки рекламы — в handlers/links.py). Всё — только владельцам.
 
 Вход в аккаунт статистики идёт по шагам в чате. Сообщения с ключами, кодом
 и паролем бот удаляет сразу после чтения — в переписке они не остаются.
@@ -13,7 +13,6 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import BufferedInputFile, CallbackQuery, Message
 
 import analytics
-import db
 import keyboards as kb
 import tgstats
 import ui
@@ -66,62 +65,6 @@ async def cb_kit(q: CallbackQuery):
     else:
         await q.message.answer_photo(BufferedInputFile(png, "mediakit.png"))
         await q.message.answer(text)
-
-
-# ---------- закупки рекламы ----------
-
-@router.callback_query(F.data == "an:ads")
-async def cb_ads(q: CallbackQuery, state: FSMContext):
-    if not is_owner(q.from_user.id):
-        return
-    await state.clear()
-    await q.answer()
-    await say(q.message, analytics.ads_screen(), _kb([[("➕ Новая закупка", "an:ads:new")]]))
-
-
-@router.callback_query(F.data == "an:ads:new")
-async def cb_ad_new(q: CallbackQuery, state: FSMContext):
-    if not is_owner(q.from_user.id):
-        return
-    await state.set_state(Ask.ad_name)
-    await q.answer()
-    await say(q.message, ui.screen("➕ <b>Новая закупка</b>",
-                                   "Как назвать? Например: <code>Путешествия дёшево, 10 окт</code>"))
-
-
-@router.message(Ask.ad_name)
-async def got_ad_name(m: Message, state: FSMContext):
-    name = " ".join((m.text or "").split())[:60]
-    if not name:
-        await m.answer("Нужно название текстом.")
-        return
-    await state.update_data(ad_name=name)
-    await state.set_state(Ask.ad_cost)
-    await m.answer("Сколько заплатил за рекламу? Число в рублях, <code>0</code> — бартер.")
-
-
-@router.message(Ask.ad_cost)
-async def got_ad_cost(m: Message, state: FSMContext):
-    digits = "".join(ch for ch in (m.text or "") if ch.isdigit())
-    if not digits:
-        await m.answer("Нужна сумма цифрами, например <code>3000</code>.")
-        return
-    name = (await state.get_data()).get("ad_name") or "Закупка"
-    await state.clear()
-    try:
-        inv = await m.bot.create_chat_invite_link(int(db.channel_id()), name=name[:32])
-    except Exception as e:
-        await m.answer("Не получилось создать ссылку: дай боту в канале право "
-                       f"«Пригласительные ссылки» и попробуй ещё раз.\n<i>{html.escape(str(e)[:150])}</i>")
-        return
-    db.add_ad(name, int(digits), inv.invite_link)
-    await say(m, ui.screen(
-        f"✅ <b>{html.escape(name)}</b>",
-        "Отдай рекламщику эту ссылку — нажми, чтобы скопировать:",
-        f"<code>{inv.invite_link}</code>",
-        "Все, кто вступит по ней, посчитаются в этой закупке: сколько пришло, "
-        "сколько осталось и во сколько обошёлся подписчик."),
-        _kb([[("📣 Все закупки", "an:ads")]]))
 
 
 # ---------- аккаунт статистики ----------

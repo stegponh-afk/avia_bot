@@ -144,14 +144,6 @@ CREATE TABLE IF NOT EXISTS pending(         -- ночные находки: ут
   PRIMARY KEY(chat_id, key)
 );
 
-CREATE TABLE IF NOT EXISTS ads(             -- закупки рекламы: своя пригласительная ссылка на каждую
-  id         INTEGER PRIMARY KEY,
-  name       TEXT,
-  cost       INTEGER,    -- рубли, 0 — бартер
-  link       TEXT,       -- https://t.me/+…
-  created_at TEXT
-);
-
 CREATE TABLE IF NOT EXISTS member_events(   -- вступления и выходы из канала (видит бот-админ)
   id      INTEGER PRIMARY KEY,
   user_id INTEGER,
@@ -183,6 +175,11 @@ MIGRATIONS = {
     },
     "watches": {
         "day_price": "INTEGER",  # цена из прошлой ежедневной сводки — от неё «за сутки»
+    },
+    "links": {
+        "target": "TEXT",        # bot — ссылка в бота (?start=метка), channel — в канал
+        "cost":   "INTEGER",     # сколько заплатили за размещение, ₽; 0/NULL — бесплатно
+        "invite": "TEXT",        # для канала: пригласительная ссылка https://t.me/+…
     },
 }
 
@@ -628,11 +625,11 @@ def set_watch(watch_id, **fields):
 
 # ---------- ссылки-отслеживания ----------
 
-def add_link(slug, name):
+def add_link(slug, name, target="bot", cost=0, invite=None):
     db = connect()
     with _lock:
-        cur = db.execute("INSERT INTO links(slug,name,created_at) VALUES(?,?,?)",
-                         (slug, name, now()))
+        cur = db.execute("INSERT INTO links(slug,name,created_at,target,cost,invite) "
+                         "VALUES(?,?,?,?,?,?)", (slug, name, now(), target, cost, invite))
         db.commit()
     return cur.lastrowid
 
@@ -871,19 +868,6 @@ def take_pending(chat_id, limit):
     return [json.loads(r[0]) for r in rows]
 
 
-def add_ad(name, cost, link):
-    db = connect()
-    with _lock:
-        cur = db.execute("INSERT INTO ads(name,cost,link,created_at) VALUES(?,?,?,?)",
-                         (name, cost, link, now()))
-        db.commit()
-    return cur.lastrowid
-
-
-def ads():
-    return connect().execute("SELECT * FROM ads ORDER BY id DESC").fetchall()
-
-
 def member_event(user_id, kind, link=None):
     db = connect()
     with _lock:
@@ -900,20 +884,34 @@ def member_flow(since):
     return r[0] or 0, r[1] or 0
 
 
-def ad_stats(link):
+def _stayed(db, user_id):
+    last = db.execute("SELECT kind FROM member_events WHERE user_id=? ORDER BY id DESC LIMIT 1",
+                      (user_id,)).fetchone()
+    return bool(last and last[0] == "join")
+
+
+def invite_stats(invite, since):
     """
-    По пригласительной ссылке: (вступили, остались). «Остались» — у кого
-    последнее событие после вступления не «вышел».
+    Ссылка в канал с момента since: (вступили, из них остались). «Остались» —
+    у кого последнее событие — вступление, а не выход.
     """
     db = connect()
     users = [r[0] for r in db.execute(
-        "SELECT DISTINCT user_id FROM member_events WHERE kind='join' AND link=?", (link,))]
-    stayed = 0
-    for u in users:
-        last = db.execute("SELECT kind FROM member_events WHERE user_id=? ORDER BY id DESC LIMIT 1",
-                          (u,)).fetchone()
-        stayed += bool(last and last[0] == "join")
-    return len(users), stayed
+        "SELECT DISTINCT user_id FROM member_events WHERE kind='join' AND link=? AND at>=?",
+        (invite, since))]
+    return len(users), sum(_stayed(db, u) for u in users)
+
+
+def invite_daily(invite, since):
+    """{день: (вступили, из них остались)} по ссылке в канал."""
+    db = connect()
+    out = {}
+    for day, u in db.execute(
+            "SELECT substr(at,1,10), user_id FROM member_events WHERE kind='join' AND link=? "
+            "AND at>=? GROUP BY 1, 2", (invite, since)):
+        j, s_ = out.get(day, (0, 0))
+        out[day] = (j + 1, s_ + _stayed(db, u))
+    return out
 
 
 def published_since(since):

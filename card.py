@@ -278,7 +278,7 @@ def render(kind, pct, route, country, price, usual, info, sign=None, transfers=0
     return out.getvalue()
 
 
-def bars(title, subtitle, days, sign=None):
+def bars(title, subtitle, days, sign=None, legend=None):
     """
     График ссылки-отслеживания: столбик на день, сверху — сколько переходов,
     зелёная часть столбика — новые люди. days — [(дата 'YYYY-MM-DD', всего, новых)].
@@ -313,7 +313,7 @@ def bars(title, subtitle, days, sign=None):
                    fill=MUTED, anchor="ms")
 
     lx = X0
-    for color, text in ((VIOLET, "переходы"), (GREEN, "новые люди")):
+    for color, text in zip((VIOLET, GREEN), legend or ("переходы", "новые люди")):
         d.rounded_rectangle([lx, H - 52, lx + 22, H - 30], radius=5, fill=color)
         d.text((lx + 32, H - 34), text, font=_font("regular", 24), fill=SOFT, anchor="ls")
         lx += 32 + d.textlength(text, font=_font("regular", 24)) + 40
