@@ -8,6 +8,7 @@
     watch     🔔 Мои направления: слежка за конкретным маршрутом
     settings  ⚙️ откуда, что присылать, бюджет, когда
     admin     /admin и кнопка «🛠 Админка», служебное
+    analytics статистика канала, медиакит, закупки рекламы, аккаунт статистики
     links     ссылки-отслеживания: создать, переходы по дням
     channel   черновики для канала: опубликовать / пропустить
     fallback  свободный текст
@@ -15,11 +16,11 @@
 Порядок подключения важен: меню раньше состояний ввода (нажатая кнопка
 главнее недописанного ответа), свободный текст — последним.
 """
-from . import (admin, channel, fallback, feed, inline, links, menu, search, settings,
-               start, watch)
+from . import (admin, analytics, channel, fallback, feed, inline, links, menu, search,
+               settings, start, watch)
 
 
 def setup(dp):
-    for module in (start, menu, feed, search, watch, settings, admin, links, channel,
-                   inline, fallback):
+    for module in (start, menu, feed, search, watch, settings, admin, analytics, links,
+                   channel, inline, fallback):
         dp.include_router(module.router)

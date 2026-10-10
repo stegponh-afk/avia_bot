@@ -323,3 +323,45 @@ def bars(title, subtitle, days, sign=None):
     out = io.BytesIO()
     img.save(out, format="PNG", optimize=True)
     return out.getvalue()
+
+
+def dashboard(title, subtitle, tiles, rows=(), sign=None, footnote=None):
+    """
+    Сводка картинкой: заголовок, до четырёх плиток «большое число + подпись»
+    и до четырёх строк «подпись … значение» под ними. Для статистики канала
+    и медиакита для рекламодателей.
+    """
+    img = _background()
+    d = ImageDraw.Draw(img)
+    d.text((X0, 56), title, font=_fit(d, title, "bold", 60, W - 2 * X0), fill=WHITE)
+    d.text((X0, 134), subtitle, font=_fit(d, subtitle, "regular", 30, W - 2 * X0), fill=MUTED)
+
+    n = max(1, min(len(tiles), 4))
+    gap = 24
+    tw = (W - 2 * X0 - gap * (n - 1)) / n
+    y0, th = 200, 170
+    for i, (value, label) in enumerate(tiles[:4]):
+        x = X0 + i * (tw + gap)
+        d.rounded_rectangle([x, y0, x + tw, y0 + th], radius=24, fill=(28, 32, 68),
+                            outline=(99, 102, 241), width=2)
+        d.text((x + 24, y0 + 74), str(value), font=_fit(d, str(value), "bold", 64, tw - 48),
+               fill=GREEN, anchor="lm")
+        d.text((x + 24, y0 + 136), label, font=_fit(d, label, "regular", 26, tw - 48),
+               fill=SOFT, anchor="lm")
+
+    y = y0 + th + 40
+    for label, value in list(rows)[:4]:
+        vf = _font("bold", 32)
+        vw = d.textlength(str(value), font=vf)
+        d.text((W - X0, y), str(value), font=vf, fill=WHITE, anchor="rm")
+        d.text((X0, y), label, font=_fit(d, label, "regular", 30, W - 2 * X0 - vw - 30),
+               fill=SOFT, anchor="lm")
+        y += 48
+    sign = C.CHANNEL_SIGN if sign is None else sign
+    if sign:
+        d.text((W - X0, H - 34), sign, font=_font("bold", 28), fill=LILAC, anchor="rs")
+    if footnote:
+        d.text((X0, H - 34), footnote, font=_font("regular", 24), fill=DIM, anchor="ls")
+    out = io.BytesIO()
+    img.save(out, format="PNG", optimize=True)
+    return out.getvalue()

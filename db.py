@@ -144,6 +144,23 @@ CREATE TABLE IF NOT EXISTS pending(         -- ночные находки: ут
   PRIMARY KEY(chat_id, key)
 );
 
+CREATE TABLE IF NOT EXISTS ads(             -- закупки рекламы: своя пригласительная ссылка на каждую
+  id         INTEGER PRIMARY KEY,
+  name       TEXT,
+  cost       INTEGER,    -- рубли, 0 — бартер
+  link       TEXT,       -- https://t.me/+…
+  created_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS member_events(   -- вступления и выходы из канала (видит бот-админ)
+  id      INTEGER PRIMARY KEY,
+  user_id INTEGER,
+  kind    TEXT,          -- join / leave
+  link    TEXT,          -- по какой пригласительной ссылке вступил
+  at      TEXT
+);
+CREATE INDEX IF NOT EXISTS ix_member_events ON member_events(at);
+
 CREATE TABLE IF NOT EXISTS meta(k TEXT PRIMARY KEY, v TEXT);
 """
 
@@ -852,6 +869,51 @@ def take_pending(chat_id, limit):
         db.execute("DELETE FROM pending WHERE chat_id=?", (chat_id,))
         db.commit()
     return [json.loads(r[0]) for r in rows]
+
+
+def add_ad(name, cost, link):
+    db = connect()
+    with _lock:
+        cur = db.execute("INSERT INTO ads(name,cost,link,created_at) VALUES(?,?,?,?)",
+                         (name, cost, link, now()))
+        db.commit()
+    return cur.lastrowid
+
+
+def ads():
+    return connect().execute("SELECT * FROM ads ORDER BY id DESC").fetchall()
+
+
+def member_event(user_id, kind, link=None):
+    db = connect()
+    with _lock:
+        db.execute("INSERT INTO member_events(user_id,kind,link,at) VALUES(?,?,?,?)",
+                   (user_id, kind, link, now()))
+        db.commit()
+
+
+def member_flow(since):
+    """(вступили, вышли) в канал с момента since — по событиям, что видел бот."""
+    r = connect().execute(
+        "SELECT SUM(kind='join'), SUM(kind='leave') FROM member_events WHERE at>=?",
+        (since,)).fetchone()
+    return r[0] or 0, r[1] or 0
+
+
+def ad_stats(link):
+    """
+    По пригласительной ссылке: (вступили, остались). «Остались» — у кого
+    последнее событие после вступления не «вышел».
+    """
+    db = connect()
+    users = [r[0] for r in db.execute(
+        "SELECT DISTINCT user_id FROM member_events WHERE kind='join' AND link=?", (link,))]
+    stayed = 0
+    for u in users:
+        last = db.execute("SELECT kind FROM member_events WHERE user_id=? ORDER BY id DESC LIMIT 1",
+                          (u,)).fetchone()
+        stayed += bool(last and last[0] == "join")
+    return len(users), stayed
 
 
 def published_since(since):

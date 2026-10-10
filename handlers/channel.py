@@ -104,3 +104,21 @@ async def on_channel_rights(ev: ChatMemberUpdated):
 @router.callback_query(F.data == "ch:noop")
 async def cb_noop(q: CallbackQuery):
     await q.answer()
+
+
+@router.chat_member()
+async def on_member(ev: ChatMemberUpdated):
+    """
+    Кто-то вступил в канал или вышел. Боту-админу Telegram сообщает это вместе
+    с пригласительной ссылкой, по которой вступили, — так считаются закупки
+    рекламы (у каждой своя ссылка) и приток/отток по дням.
+    """
+    if ev.chat.type != "channel" or str(ev.chat.id) != str(db.channel_id()):
+        return
+    was, now = ev.old_chat_member.status, ev.new_chat_member.status
+    inside = ("member", "administrator", "creator", "restricted")
+    if now in inside and was not in inside:
+        link = ev.invite_link.invite_link if ev.invite_link else None
+        db.member_event(ev.new_chat_member.user.id, "join", link)
+    elif was in inside and now not in inside:
+        db.member_event(ev.new_chat_member.user.id, "leave")

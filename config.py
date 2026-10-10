@@ -318,6 +318,7 @@ AD_LABEL = _s("AVIA_AD_LABEL", "")
 AD_LABEL_ERID = _b("AVIA_AD_LABEL_ERID", True)   # дописывать erid из партнёрской ссылки
 CHANNEL_SIGN = _s("AVIA_CHANNEL_SIGN", "@AviaChecker_bot")    # подпись в углу карточки
 BOT_USERNAME = _s("AVIA_BOT_USERNAME", "AviaChecker_bot")     # для кнопки «Свои уведомления»
+AD_CONTACT = _s("AVIA_AD_CONTACT", "")     # контакт для рекламы в медиакит: @username
 
 # ---------- 13а. Обслуживание ----------
 BACKUP_EVERY_H = _i("AVIA_BACKUP_EVERY", 24)   # как часто копировать базу, часов
