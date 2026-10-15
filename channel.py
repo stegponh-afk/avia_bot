@@ -413,9 +413,10 @@ async def publish_next():
     """
     Опубликовать лучший пост из очереди, если подошло время (gap_now).
 
-    Не больше CHANNEL_DAY_MAX постов за сутки: сорок постов в день — это
-    уведомление каждые двадцать минут, от такого отписываются. Ночью —
-    только суперскидки, остальное ждёт утра в очереди или устаревает.
+    Не больше CHANNEL_DAY_MAX постов за сутки: двадцать постов в день — это
+    уведомление каждые сорок минут, от такого отписываются. Ночью — только
+    суперскидки и не больше CHANNEL_NIGHT_MAX, чтобы ночь не съела дневной
+    лимит; остальное ждёт утра в очереди или устаревает.
 
     Не вышло (цена ушла, билет пропал) — пост снимается, следующий пробуем
     на следующем тике. Источник не ответил — пост остаётся в очереди.
@@ -424,7 +425,7 @@ async def publish_next():
         return False
     db.expire_queue(C.CHANNEL_QUEUE_HOURS)
     done = published_today()
-    if done >= C.CHANNEL_DAY_MAX:
+    if done >= C.CHANNEL_DAY_MAX or (quiet_now() and done >= C.CHANNEL_NIGHT_MAX):
         return False
     last = db.last_published_at()
     if last and (datetime.now() - datetime.fromisoformat(last)).total_seconds() \

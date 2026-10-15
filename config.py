@@ -294,8 +294,9 @@ CHANNEL_AUTO = _b("AVIA_CHANNEL_AUTO", True)            # False = чернови
 # в нём не нажимаются — только долгим нажатием. False = картинка с подписью.
 CHANNEL_RICH = _b("AVIA_CHANNEL_RICH", True)
 CHANNEL_GAP_MIN = _i("AVIA_CHANNEL_GAP", 10)            # минут между постами, не чаще
-CHANNEL_GAP_MAX = _i("AVIA_CHANNEL_GAP_MAX", 60)        # и не реже, если есть что публиковать
-CHANNEL_DAY_MAX = _i("AVIA_CHANNEL_DAY_MAX", 20)        # постов за сутки, не больше
+CHANNEL_GAP_MAX = _i("AVIA_CHANNEL_GAP_MAX", 120)       # и не реже, если есть что публиковать
+CHANNEL_DAY_MAX = _i("AVIA_CHANNEL_DAY_MAX", 10)        # постов за сутки, не больше
+CHANNEL_NIGHT_MAX = _i("AVIA_CHANNEL_NIGHT_MAX", 2)     # из них ночью — не больше стольких
 CHANNEL_FRESH_HOURS = _i("AVIA_CHANNEL_FRESH_HOURS", 3) # свежие посты сверяем часто…
 CHANNEL_FRESH_EVERY = _i("AVIA_CHANNEL_FRESH_EVERY", 10) # …раз в столько минут
 CHANNEL_NIGHT_PCT = _i("AVIA_CHANNEL_NIGHT_PCT", 50)    # ночью — только скидки от стольких %
